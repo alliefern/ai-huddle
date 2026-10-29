@@ -37,20 +37,24 @@ const DEFAULTS = {
     timeoutSec: 300,
     contextMessages: 40,
     contextChars: 24000,
+    team: 'mixed', // mixed | girls | boys (display names only)
+    onboarded: false, // false = show the first-run setup screen
   },
   agents: {
     claude: {
       label: 'Claude',
       color: '#d97757',
       enabled: true,
+      dailyBudget: 50, // runs per day the usage bar fills toward (0 = no bar)
       command: 'claude',
       args: ['-p'],
       input: 'stdin',
     },
     codex: {
-      label: 'Codex',
+      label: 'Codexa',
       color: '#10a37f',
       enabled: true,
+      dailyBudget: 50,
       command: 'codex',
       // Codex refuses to run outside a git repo unless told otherwise, and Huddle's workspace isn't one.
       args: ['exec', '--skip-git-repo-check', '-'],
@@ -61,11 +65,19 @@ const DEFAULTS = {
       label: 'Grok',
       color: '#141414',
       enabled: true,
+      dailyBudget: 50,
       command: 'grok',
       args: ['--no-auto-update', '-p', '{prompt}'],
       input: 'arg',
     },
   },
+};
+
+// Team style: who's called what. The @ids never change, only the display names.
+const TEAMS = {
+  mixed: { claude: 'Claude', codex: 'Codexa', grok: 'Grok' },
+  girls: { claude: 'Claudette', codex: 'Codexa', grok: 'Grokette' },
+  boys: { claude: 'Claude', codex: 'Codex', grok: 'Grok' },
 };
 
 const INPUT_MODES = ['stdin', 'file', 'arg'];
@@ -75,6 +87,7 @@ const LIMITS = {
   timeoutSec: [10, 1800],
   contextMessages: [5, 200],
   contextChars: [2000, 100000],
+  dailyBudget: [0, 1000],
 };
 
 const MAX_STORED_MESSAGES = 2000;
@@ -182,6 +195,7 @@ class Engine extends EventEmitter {
     this.lastResponder = new Map(); // roomId -> agentId
     this._saveTimer = null;
     this.files = new Set(); // absolute paths of every attachment Huddle knows about (the UI may only open these)
+    this.usage = { day: '', counts: {} }; // runs started from AI Huddle today, per agent
     this.skills = new SkillStore(opts.skillsDir || path.join(storeDir, 'skills'));
 
     this._load();
@@ -203,6 +217,7 @@ class Engine extends EventEmitter {
 
     if (raw.config) this._mergeConfig(raw.config, false);
     this._migrateOldDefaults();
+    if (raw.usage && typeof raw.usage === 'object' && raw.usage.counts) this.usage = { day: String(raw.usage.day || ''), counts: { ...raw.usage.counts } };
 
     if (Array.isArray(raw.rooms)) {
       this.rooms = raw.rooms.map((r) => this._normalizeRoom(r)).filter(Boolean);
@@ -291,6 +306,7 @@ class Engine extends EventEmitter {
     const data = {
       version: 2,
       config: this.config,
+      usage: this.usage,
       rooms: this.rooms.map((r) => ({ ...r, transcript: r.transcript.slice(-MAX_STORED_MESSAGES) })),
     };
     const tmp = this.storeFile + '.tmp';
@@ -325,8 +341,10 @@ class Engine extends EventEmitter {
         } else {
           v = String(v == null ? '' : v).trim();
           if (k === 'userName' && !v) v = D.userName;
+          if (k === 'team' && !TEAMS[v]) continue;
         }
         S[k] = v;
+        if (k === 'team') for (const [id, nm] of Object.entries(TEAMS[v])) if (this.config.agents[id]) this.config.agents[id].label = nm;
       }
     }
 
@@ -339,6 +357,13 @@ class Engine extends EventEmitter {
         if (typeof p.command === 'string' && p.command.trim()) a.command = p.command.trim();
         if (Array.isArray(p.args)) a.args = p.args.map(String).filter((x) => x.length);
         if (INPUT_MODES.includes(p.input)) a.input = p.input;
+        if ('dailyBudget' in p) {
+          const n = Number(p.dailyBudget);
+          if (Number.isFinite(n)) {
+            const [lo, hi] = LIMITS.dailyBudget;
+            a.dailyBudget = trusted ? Math.round(n) : Math.min(hi, Math.max(lo, Math.round(n)));
+          }
+        }
       }
     }
   }
@@ -649,6 +674,25 @@ class Engine extends EventEmitter {
     return roomId + '|' + agentId;
   }
 
+  _today() {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+
+  _usageNow() {
+    const day = this._today();
+    if (this.usage.day !== day) this.usage = { day, counts: {} };
+    const out = {};
+    for (const [id, a] of Object.entries(this.config.agents)) out[id] = { used: this.usage.counts[id] || 0, budget: a.dailyBudget || 0 };
+    return out;
+  }
+
+  _bumpUsage(agentId) {
+    this._usageNow(); // rolls the day over first
+    this.usage.counts[agentId] = (this.usage.counts[agentId] || 0) + 1;
+    this._scheduleSave();
+  }
+
   _status() {
     const running = {};
     for (const e of this.running.values()) (running[e.room] = running[e.room] || []).push(e.agent);
@@ -659,7 +703,7 @@ class Engine extends EventEmitter {
       queued[t.room] = queued[t.room] || {};
       queued[t.room][t.agent] = q.length;
     }
-    return { running, queued };
+    return { running, queued, usage: this._usageNow() };
   }
 
   _emitStatus() {
@@ -837,6 +881,7 @@ class Engine extends EventEmitter {
     const agent = this.config.agents[task.agent];
     const entry = { child: null, room: task.room, agent: task.agent };
     this.running.set(key, entry);
+    this._bumpUsage(task.agent);
     this._emitStatus();
 
     let result;
@@ -1110,4 +1155,4 @@ class Engine extends EventEmitter {
   }
 }
 
-module.exports = { Engine, DEFAULTS, stripAnsi, winQuote, resolveCommand };
+module.exports = { Engine, DEFAULTS, TEAMS, stripAnsi, winQuote, resolveCommand };

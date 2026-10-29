@@ -55,6 +55,34 @@
   }
   const themeColor = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim() || '#ff5fa2';
   const agent = (id) => state.config && state.config.agents[id];
+
+  // Avatar art lives in renderer/avatars/<team>/<agent>.png. Teams without art yet fall back to initials.
+  const AVATAR_ART = { mixed: ['claude', 'codex', 'grok'], girls: [], boys: [] };
+  const TEAM_NAMES = {
+    mixed: { title: 'Mixed team', names: ['Claude', 'Codexa', 'Grok'] },
+    girls: { title: 'All girls', names: ['Claudette', 'Codexa', 'Grokette'] },
+    boys: { title: 'All boys', names: ['Claude', 'Codex', 'Grok'] },
+  };
+  const teamId = () => (state.config && state.config.settings.team) || 'mixed';
+  function avatarUrl(id, team) {
+    const t = team || teamId();
+    return (AVATAR_ART[t] || []).includes(id) ? `avatars/${t}/${id}.png` : null;
+  }
+  function fillAvatar(el, id, initial, team) {
+    const url = avatarUrl(id, team);
+    el.textContent = '';
+    if (url) {
+      const img = document.createElement('img');
+      img.src = url;
+      img.alt = '';
+      img.draggable = false;
+      el.classList.add('art');
+      el.append(img);
+    } else {
+      el.classList.remove('art');
+      el.textContent = initial;
+    }
+  }
   const activeRoom = () => state.rooms.find((r) => r.id === state.activeId) || null;
   const roomRunning = (rid) => (state.status.running && state.status.running[rid]) || [];
   const roomQueued = (rid) => (state.status.queued && state.status.queued[rid]) || {};
@@ -130,7 +158,7 @@
 
     const av = document.createElement('div');
     av.className = 'avatar';
-    av.textContent = nameOf(m.from).slice(0, 1).toUpperCase();
+    fillAvatar(av, m.from, nameOf(m.from).slice(0, 1).toUpperCase());
 
     const bubble = document.createElement('div');
     bubble.className = 'bubble';
@@ -451,9 +479,24 @@
       row.className = 'who-row' + (a.enabled ? '' : ' off');
       row.style.setProperty('--c', a.color);
       row.title = f && f.found ? f.path : f ? 'Not found. Open Settings → Check my CLIs.' : '';
-      row.innerHTML = `<span class="dot ${cls}"></span><span>${esc(a.label)}</span>${
-        f && f.found === false && a.enabled ? '<span> · not found</span>' : ''
-      }`;
+      const pic = document.createElement('span');
+      pic.className = 'mini-av';
+      pic.style.setProperty('--on-c', readable(a.color));
+      fillAvatar(pic, id, a.label.slice(0, 1).toUpperCase());
+      row.innerHTML = `<span class="dot ${cls}"></span>`;
+      row.append(pic);
+      const nm = document.createElement('span');
+      nm.textContent = a.label + (f && f.found === false && a.enabled ? ' · not found' : '');
+      row.append(nm);
+      const u = state.status.usage && state.status.usage[id];
+      if (u && u.budget > 0 && a.enabled) {
+        const pct = Math.round((u.used / u.budget) * 100);
+        const bar = document.createElement('div');
+        bar.className = 'use' + (pct >= 100 ? ' over' : pct >= 80 ? ' high' : '');
+        bar.title = `${u.used} of your ${u.budget}-run daily budget used today (runs started from AI Huddle only). Change the budget in Settings.`;
+        bar.innerHTML = `<span class="track"><i style="width:${Math.min(100, pct)}%"></i></span><span class="pct">${pct}%</span><span class="n">${u.used}/${u.budget}</span>`;
+        row.append(bar);
+      }
       box.append(row);
     });
   }
@@ -1172,39 +1215,16 @@
         const look = document.createElement('div');
         look.className = 'group';
         look.innerHTML = '<h3>Look</h3>';
-        const grid0 = document.createElement('div');
-        grid0.className = 'themes';
-        const cur = window.HuddleThemes.current();
-        window.HuddleThemes.list.forEach((t) => {
-          const b = document.createElement('button');
-          b.type = 'button';
-          b.className = 'theme-card' + (t.id === cur ? ' on' : '');
-          b.dataset.theme = t.id;
-          b.style.background = t.cream;
-          b.style.color = t.ink;
-          b.style.borderColor = t.ink;
-          b.setAttribute('aria-pressed', t.id === cur ? 'true' : 'false');
-          b.innerHTML =
-            '<span class="sw">' +
-            [t.side, t.chart, t.pink, t.ink].map((c) => `<i style="background:${c};border-color:${t.ink}"></i>`).join('') +
-            '</span>' +
-            `<span class="tname">${esc(t.name)}${t.id === cur ? ' ✶' : ''}</span>`;
-          b.addEventListener('click', () => {
-            window.HuddleThemes.apply(t.id);
-            grid0.querySelectorAll('.theme-card').forEach((x) => {
-              const on = x.dataset.theme === t.id;
-              x.classList.toggle('on', on);
-              x.setAttribute('aria-pressed', String(on));
-              x.querySelector('.tname').textContent = window.HuddleThemes.list.find((k) => k.id === x.dataset.theme).name + (on ? ' ✶' : '');
-            });
-          });
-          grid0.append(b);
-        });
-        look.append(grid0);
+        look.append(buildTeamPicker(), buildThemeGrid());
         const lh = document.createElement('p');
         lh.className = 'hint';
-        lh.textContent = 'Applies right away and is remembered on this computer.';
+        lh.textContent = 'Team and skin apply right away. The skin is remembered on this computer.';
         look.append(lh);
+        const again = document.createElement('button');
+        again.className = 'btn small';
+        again.textContent = 'Replay the welcome setup';
+        again.addEventListener('click', openSetup);
+        look.append(again);
         body.append(look);
 
         const g = document.createElement('div');
@@ -1259,6 +1279,10 @@
         hint.textContent =
           'Max auto hand-offs is per message you send. When it runs out, the last message gets "Send to…" buttons so you decide whether to keep going. Each room can override the folder.';
         g.append(hint);
+        const bh = document.createElement('p');
+        bh.className = 'hint';
+        bh.textContent = 'The bars in the sidebar count runs AI Huddle started today against the daily budget you set per agent below. That is your own budget, not your plan\'s real limit, and it does not see usage from other apps.';
+        g.append(bh);
         body.append(g);
 
         Object.entries(c.agents).forEach(([id, a]) => {
@@ -1284,6 +1308,7 @@
             '<option value="arg">Right in the arguments ({prompt})</option>';
           sel.value = a.input;
           r.input = sel;
+          r.budget = numInput(a.dailyBudget == null ? 50 : a.dailyBudget, 0, 1000);
 
           const gr = document.createElement('div');
           gr.className = 'grid';
@@ -1291,7 +1316,8 @@
             ...field('Switched on', en),
             ...field('Command', r.command),
             ...field('Arguments', r.args),
-            ...field('Prompt goes in via', sel)
+            ...field('Prompt goes in via', sel),
+            ...field('Daily budget (runs, 0 = no bar)', r.budget)
           );
           box.append(gr);
 
@@ -1352,12 +1378,135 @@
                 command: r.command.value,
                 args: r.args.value.split(/\s+/).filter(Boolean),
                 input: r.input.value,
+                dailyBudget: Number(r.budget.value),
               };
             });
             await api.saveConfig(patch);
             closeSheet();
             toast('Saved');
             recheck();
+          },
+        },
+      ]
+    );
+  }
+
+  function buildThemeGrid() {
+    const grid0 = document.createElement('div');
+    grid0.className = 'themes';
+    const cur = window.HuddleThemes.current();
+    window.HuddleThemes.list.forEach((t) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'theme-card' + (t.id === cur ? ' on' : '');
+      b.dataset.theme = t.id;
+      b.style.background = t.cream;
+      b.style.color = t.ink;
+      b.style.borderColor = t.ink;
+      b.setAttribute('aria-pressed', t.id === cur ? 'true' : 'false');
+      b.innerHTML =
+        '<span class="sw">' +
+        [t.side, t.chart, t.pink, t.ink].map((c) => `<i style="background:${c};border-color:${t.ink}"></i>`).join('') +
+        '</span>' +
+        `<span class="tname">${esc(t.name)}${t.id === cur ? ' ✶' : ''}</span>`;
+      b.addEventListener('click', () => {
+        window.HuddleThemes.apply(t.id);
+        grid0.querySelectorAll('.theme-card').forEach((x) => {
+          const on = x.dataset.theme === t.id;
+          x.classList.toggle('on', on);
+          x.setAttribute('aria-pressed', String(on));
+          x.querySelector('.tname').textContent = window.HuddleThemes.list.find((k) => k.id === x.dataset.theme).name + (on ? ' ✶' : '');
+        });
+      });
+      grid0.append(b);
+    });
+    return grid0;
+  }
+
+  // Three team cards. onPick(team) fires on click; the card for `current` is marked.
+  function buildTeamPicker(current, onPick) {
+    const wrap = document.createElement('div');
+    wrap.className = 'teams';
+    const cur = current || teamId();
+    Object.entries(TEAM_NAMES).forEach(([id, t]) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'team-card' + (id === cur ? ' on' : '');
+      b.dataset.team = id;
+      b.setAttribute('aria-pressed', id === cur ? 'true' : 'false');
+      const faces = document.createElement('span');
+      faces.className = 'faces';
+      ['claude', 'codex', 'grok'].forEach((aid, i) => {
+        const f = document.createElement('span');
+        f.className = 'mini-av';
+        const col = (state.config.agents[aid] || {}).color || '#888';
+        f.style.setProperty('--c', col);
+        f.style.setProperty('--on-c', readable(col));
+        fillAvatar(f, aid, t.names[i].slice(0, 1), id);
+        faces.append(f);
+      });
+      b.append(faces);
+      const nm = document.createElement('span');
+      nm.className = 'tname';
+      nm.textContent = t.title;
+      const sub = document.createElement('span');
+      sub.className = 'tsub';
+      sub.textContent = t.names.join(' · ');
+      b.append(nm, sub);
+      b.addEventListener('click', async () => {
+        wrap.querySelectorAll('.team-card').forEach((x) => {
+          x.classList.toggle('on', x === b);
+          x.setAttribute('aria-pressed', String(x === b));
+        });
+        if (onPick) onPick(id);
+        else await api.saveConfig({ settings: { team: id } });
+      });
+      wrap.append(b);
+    });
+    return wrap;
+  }
+
+  // First-run welcome. Also reachable any time from Settings.
+  function openSetup() {
+    const picked = { team: teamId(), name: (state.config.settings.userName || '').replace(/^You$/, '') };
+    openSheet(
+      'Welcome to AI Huddle',
+      (body) => {
+        const intro = document.createElement('p');
+        intro.className = 'hint';
+        intro.textContent = 'Three quick things. You can change every one of them later in Settings.';
+        body.append(intro);
+
+        const g1 = document.createElement('div');
+        g1.className = 'group';
+        g1.innerHTML = '<h3>What should they call you?</h3>';
+        const nameIn = textInput(picked.name, { placeholder: 'Your name' });
+        nameIn.id = 'setup-name';
+        nameIn.addEventListener('input', () => (picked.name = nameIn.value));
+        g1.append(nameIn);
+        body.append(g1);
+
+        const g2 = document.createElement('div');
+        g2.className = 'group';
+        g2.innerHTML = '<h3>Pick your team</h3>';
+        g2.append(buildTeamPicker(picked.team, (t) => (picked.team = t)));
+        body.append(g2);
+
+        const g3 = document.createElement('div');
+        g3.className = 'group';
+        g3.innerHTML = '<h3>Pick your colors</h3>';
+        g3.append(buildThemeGrid());
+        body.append(g3);
+      },
+      [
+        'spacer',
+        {
+          label: "Let's go",
+          kind: 'primary',
+          id: 'setup-go',
+          onClick: async () => {
+            await api.saveConfig({ settings: { userName: picked.name.trim() || 'You', team: picked.team, onboarded: true } });
+            closeSheet();
           },
         },
       ]
@@ -1428,5 +1577,9 @@
     await refreshSkills();
     if (s.rooms.length) await selectRoom((s.rooms.find((x) => !x.archived) || s.rooms[0]).id);
     recheck();
+    if (!s.config.settings.onboarded) {
+      api.saveConfig({ settings: { onboarded: true } }); // shown once, however it gets closed
+      openSetup();
+    }
   })();
 })();

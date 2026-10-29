@@ -356,6 +356,7 @@ body {
 }
 
 .who-row {
+  flex-wrap: wrap;
   display: flex;
   align-items: center;
   gap: 9px;
@@ -1711,3 +1712,89 @@ body {
   background: var(--pink);
   color: var(--on-pink);
 }
+
+
+/* avatar art */
+.avatar.art,
+.mini-av.art {
+  padding: 0;
+  overflow: hidden;
+  background: var(--card);
+}
+.avatar.art img,
+.mini-av.art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.mini-av {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  flex: none;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 800;
+  background: var(--c, var(--pink));
+  color: var(--on-c, #fff);
+  border: 1.5px solid var(--on-side);
+}
+.who-row .mini-av { border-color: var(--on-side); }
+
+/* usage bars */
+.use {
+  flex: 1 0 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  padding-left: 18px;
+}
+.use .track {
+  flex: 1;
+  height: 7px;
+  border-radius: 99px;
+  border: 1.5px solid var(--on-side);
+  overflow: hidden;
+}
+.use .track i {
+  display: block;
+  height: 100%;
+  background: var(--chart);
+}
+.use.high .track i { background: #ffb347; }
+.use.over .track i { background: var(--pink); }
+.use .pct { min-width: 28px; text-align: right; }
+.use .n { font-weight: 600; }
+
+/* team picker */
+.teams {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin: 6px 0 12px;
+}
+.team-card {
+  font: inherit;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 8px;
+  border: var(--line);
+  border-radius: var(--radius);
+  background: var(--card);
+  color: var(--ink);
+  cursor: pointer;
+}
+.team-card.on { box-shadow: var(--pop); outline: 3px solid var(--chart); }
+.team-card .faces { display: flex; }
+.team-card .faces .mini-av { width: 36px; height: 36px; margin-left: -8px; border-color: var(--ink); font-size: 14px; }
+.team-card .faces .mini-av:first-child { margin-left: 0; }
+.team-card .tname { font-weight: 800; font-size: 13px; }
+.team-card .tsub { font-size: 11px; font-weight: 600; }
+#setup-name { width: 100%; }

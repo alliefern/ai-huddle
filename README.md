@@ -59,6 +59,8 @@ After installing one, close AI Huddle and reopen it, then use **Settings → Che
 ## Be aware
 
 - **Every reply uses your real plan limits.** `@all` is three runs. Two agents ping-ponging is a lot of runs. Settings → Back-and-forth is the guardrail: cap it (default 6 per message) or choose "No cap, let them run" (Stop always works, and there is a hard ceiling of 200).
+- **Pick your team.** All girls (Claudette, Codexa, Grokette), all boys (Claude, Codex, Grok) or mixed (Claude, Codexa, Grok). First launch walks you through your name, team and color skin, and Settings has it all later.
+- **Usage bars.** Each agent in the sidebar has a bar and percentage against a daily budget you set. It counts runs AI Huddle started, so it is your own budget, not your plan's real limit.
 - **Leaving?** Hover a room, hit ⋯ → Export chat. You get one Markdown file of the whole conversation, every bot's replies included, ready to upload to any single AI.
 - **No permission flags are added.** Each CLI runs with its own defaults. If you add something like a skip-permissions flag, that agent can act on your files without asking, in the room's folder.
 - Agents are told not to touch files unless you ask. That's an instruction, not a lock.

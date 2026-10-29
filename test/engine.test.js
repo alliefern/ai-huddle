@@ -100,7 +100,7 @@ const alive = (pid) => {
     e.send(R(e), '@grok first');
     await idle(e);
     const p = e._buildPrompt(e.rooms[0], 'codex');
-    check('prompt names the agent and the room', p.includes('You are Codex (@codex)') && p.includes('"kablock"'));
+    check('prompt names the agent and the room', p.includes('You are Codexa (@codex)') && p.includes('"kablock"'));
     check('prompt carries the room topic', p.includes('What this room is for: Naming and launch plan for Kablock'));
     check('prompt lists the others', p.includes('Claude (@claude)') && p.includes('Grok (@grok)'));
     check('prompt includes transcript', p.includes('[You] @grok first') && p.includes('[Grok] grok:'));
@@ -168,6 +168,32 @@ const alive = (pid) => {
     check('cap mode still caps (1 + 3)', agentMsgs(e3).length === 4 && sysMsgs(e3).some((m) => /Paused after 3/.test(m.text)));
     e3.updateConfig({ settings: { capHandoffs: false } });
     check('the setting saves as a boolean', e3.config.settings.capHandoffs === false);
+  }
+
+  console.log('teams and usage');
+  {
+    const e = mk({});
+    e.updateConfig({ settings: { team: 'girls' } });
+    check('girls team renames everyone', e.config.agents.claude.label === 'Claudette' && e.config.agents.codex.label === 'Codexa' && e.config.agents.grok.label === 'Grokette');
+    e.updateConfig({ settings: { team: 'boys' } });
+    check('boys team', e.config.agents.codex.label === 'Codex' && e.config.agents.grok.label === 'Grok');
+    e.updateConfig({ settings: { team: 'nonsense' } });
+    check('bad team is ignored', e.config.settings.team === 'boys');
+    e.updateConfig({ settings: { team: 'girls' } });
+    e.send(R(e), '@grok hi');
+    await idle(e);
+    check('prompt uses the team name', e._buildPrompt(e.rooms[0], 'grok').includes('You are Grokette (@grok)'));
+    check('mentions still use ids', e.rooms[0].transcript.some((m) => m.from === 'grok'));
+    e.updateConfig({ agents: { grok: { dailyBudget: 5000 } } });
+    check('budget is clamped', e.config.agents.grok.dailyBudget === 1000);
+    e.updateConfig({ agents: { grok: { dailyBudget: 10 } } });
+    const u = e._status().usage;
+    check('usage counts runs per agent', u.grok.used === 1 && u.grok.budget === 10 && u.claude.used === 0, JSON.stringify(u));
+    e.flush();
+    const e2 = new Engine(e.dir, {});
+    check('usage survives a restart', e2._status().usage.grok.used === 1);
+    e2.usage.day = '1999-01-01';
+    check('usage resets on a new day', e2._status().usage.grok.used === 0);
   }
 
   console.log('export');
