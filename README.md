@@ -37,7 +37,7 @@ build your own installer with `npm run dist` (Windows). on Windows you can also 
 
 ## before you open it, set up the CLIs
 
-AI Huddle drives the command-line tools, so each one you want has to work in a normal terminal first, and you have to be logged in, though you don't need all three.
+AI Huddle drives the command-line tools, so each one you want has to work in a normal terminal first. You only need one of the three.
 
 Each one needs two things done once, in a normal terminal (PowerShell is fine): **install it**, then **log in**. AI Huddle can't do either for you. The tools change their install steps from time to time, so use each tool's own docs if one of these has moved.
 
@@ -53,8 +53,6 @@ If the "see if it works" command prints a reply, AI Huddle can use that agent. I
 - Close AI Huddle and open it again after installing a CLI, so it picks up the new install.
 - Settings → **Check my CLIs** shows where it looked. If the tool works in your terminal but not here, type its full path into that agent's Command box.
 - Don't need all three? Switch the ones you don't use off in Settings.
-
-after you install one, close AI Huddle and open it again, then use **settings → check my CLIs** to see where each one was found. anything missing shows "not found", and you can switch it off.
 
 ## shared skills
 
