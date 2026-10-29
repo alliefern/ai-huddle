@@ -1,6 +1,6 @@
 {
   "name": "ai-huddle",
-  "version": "0.1.1",
+  "version": "0.1.3",
   "description": "a local chat room for Claude, Codex and Grok, using the CLIs you're already logged into, so you don't need API keys.",
   "main": "main.js",
   "author": {
