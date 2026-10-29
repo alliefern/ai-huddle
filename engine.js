@@ -38,6 +38,7 @@ const DEFAULTS = {
     contextMessages: 40,
     contextChars: 24000,
     team: 'mixed', // mixed | girls | boys (display names only)
+    userAvatar: '', // '' = initial letter, or 'boy' | 'girl' (pictures in renderer/avatars/you)
     onboarded: false, // false = show the first-run setup screen
   },
   agents: {
@@ -342,6 +343,7 @@ class Engine extends EventEmitter {
           v = String(v == null ? '' : v).trim();
           if (k === 'userName' && !v) v = D.userName;
           if (k === 'team' && !TEAMS[v]) continue;
+          if (k === 'userAvatar' && !['', 'boy', 'girl'].includes(v)) continue;
         }
         S[k] = v;
         if (k === 'team') for (const [id, nm] of Object.entries(TEAMS[v])) if (this.config.agents[id]) this.config.agents[id].label = nm;

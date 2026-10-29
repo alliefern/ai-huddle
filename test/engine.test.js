@@ -196,6 +196,15 @@ const alive = (pid) => {
     check('usage resets on a new day', e2._status().usage.grok.used === 0);
   }
 
+  console.log('user avatar');
+  {
+    const e = mk({});
+    e.updateConfig({ settings: { userAvatar: 'girl' } });
+    check('user avatar saves', e.config.settings.userAvatar === 'girl');
+    e.updateConfig({ settings: { userAvatar: 'robot' } });
+    check('unknown avatar ignored', e.config.settings.userAvatar === 'girl');
+  }
+
   console.log('export');
   {
     const e = mk({});

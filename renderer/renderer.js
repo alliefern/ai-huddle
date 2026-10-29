@@ -69,12 +69,16 @@
     boys: { title: 'All boys', names: ['Claude', 'Codex', 'Grok'] },
   };
   const teamId = () => (state.config && state.config.settings.team) || 'mixed';
+  const youUrl = () => {
+    const a = state.config && state.config.settings.userAvatar;
+    return a ? `avatars/you/${a}.png` : null;
+  };
   function avatarUrl(id, team) {
     const dir = (AVATAR_ART[team || teamId()] || {})[id];
     return dir ? `avatars/${dir}/${id}.png` : null;
   }
   function fillAvatar(el, id, initial, team) {
-    const url = avatarUrl(id, team);
+    const url = id === 'you' ? youUrl() : avatarUrl(id, team);
     el.textContent = '';
     if (url) {
       const img = document.createElement('img');
@@ -196,7 +200,8 @@
       bubble.append(h);
     }
 
-    wrap.append(av, bubble);
+    if (m.from === 'you') wrap.append(bubble, av);
+    else wrap.append(av, bubble);
     return wrap;
   }
 
@@ -1220,6 +1225,10 @@
         const look = document.createElement('div');
         look.className = 'group';
         look.innerHTML = '<h3>Look</h3>';
+        const ah = document.createElement('h3');
+        ah.textContent = 'Your avatar';
+        ah.className = 'sub-h';
+        look.append(ah, buildAvatarPicker());
         look.append(buildTeamPicker(), buildThemeGrid());
         const lh = document.createElement('p');
         lh.className = 'hint';
@@ -1428,6 +1437,39 @@
     return grid0;
   }
 
+  // Two picture choices plus "initial only". onPick(value) if given, otherwise saves straight away.
+  function buildAvatarPicker(current, onPick) {
+    const wrap = document.createElement('div');
+    wrap.className = 'avatars';
+    const cur = current == null ? (state.config.settings.userAvatar || '') : current;
+    [['boy', 'Boy'], ['girl', 'Girl'], ['', 'Initial']].forEach(([v, name]) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'avatar-pick' + (v === cur ? ' on' : '') + (v ? '' : ' none');
+      b.dataset.avatar = v;
+      b.setAttribute('aria-label', 'Avatar: ' + name);
+      b.setAttribute('aria-pressed', String(v === cur));
+      if (v) {
+        const img = document.createElement('img');
+        img.src = `avatars/you/${v}.png`;
+        img.alt = '';
+        b.append(img);
+      } else {
+        b.textContent = 'Initial';
+      }
+      b.addEventListener('click', async () => {
+        wrap.querySelectorAll('.avatar-pick').forEach((x) => {
+          x.classList.toggle('on', x === b);
+          x.setAttribute('aria-pressed', String(x === b));
+        });
+        if (onPick) onPick(v);
+        else await api.saveConfig({ settings: { userAvatar: v } });
+      });
+      wrap.append(b);
+    });
+    return wrap;
+  }
+
   // Three team cards. onPick(team) fires on click; the card for `current` is marked.
   function buildTeamPicker(current, onPick) {
     const wrap = document.createElement('div');
@@ -1473,7 +1515,7 @@
 
   // First-run welcome. Also reachable any time from Settings.
   function openSetup() {
-    const picked = { team: teamId(), name: (state.config.settings.userName || '').replace(/^You$/, '') };
+    const picked = { avatar: (state.config.settings.userAvatar || ''), team: teamId(), name: (state.config.settings.userName || '').replace(/^You$/, '') };
     openSheet(
       'Welcome to AI Huddle',
       (body) => {
@@ -1489,6 +1531,10 @@
         nameIn.id = 'setup-name';
         nameIn.addEventListener('input', () => (picked.name = nameIn.value));
         g1.append(nameIn);
+        const av1 = document.createElement('h3');
+        av1.textContent = 'Pick your avatar';
+        av1.className = 'sub-h';
+        g1.append(av1, buildAvatarPicker(picked.avatar, (v) => (picked.avatar = v)));
         body.append(g1);
 
         const g2 = document.createElement('div');
@@ -1510,7 +1556,7 @@
           kind: 'primary',
           id: 'setup-go',
           onClick: async () => {
-            await api.saveConfig({ settings: { userName: picked.name.trim() || 'You', team: picked.team, onboarded: true } });
+            await api.saveConfig({ settings: { userName: picked.name.trim() || 'You', team: picked.team, userAvatar: picked.avatar, onboarded: true } });
             closeSheet();
           },
         },
