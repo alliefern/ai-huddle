@@ -205,6 +205,50 @@ const alive = (pid) => {
     check('unknown avatar ignored', e.config.settings.userAvatar === 'girl');
   }
 
+  console.log('updater');
+  {
+    const { Updater } = require('../updater');
+    const EventEmitter = require('events');
+    const mkU = (over, appOver) => {
+      const au = new EventEmitter();
+      au.checks = 0;
+      au.checkForUpdates = async () => { au.checks++; };
+      au.quitAndInstall = () => { au.quit = true; };
+      const sent = [];
+      const u = new Updater({ autoUpdater: au, app: { isPackaged: true, getVersion: () => '0.1.0', ...(appOver || {}) }, send: (s) => sent.push(s.state), isEnabled: () => true, env: {}, ...(over || {}) });
+      return { u, au, sent };
+    };
+    let k = mkU();
+    await k.u.check(false);
+    check('installed build checks on startup', k.au.checks === 1);
+    k.au.emit('update-available', { version: '0.2.0' });
+    k.au.emit('download-progress', { percent: 41.6 });
+    k.au.emit('update-downloaded', { version: '0.2.0' });
+    check('walks through downloading to ready', k.sent.includes('downloading') && k.u.getState().state === 'ready' && k.u.getState().latest === '0.2.0');
+    check('restart installs only when ready', k.u.install() === true && k.au.quit === true);
+    k = mkU();
+    check('install does nothing before an update is ready', k.u.install() === false && !k.au.quit);
+    k = mkU({ isEnabled: () => false });
+    await k.u.check(false);
+    check('switch off means no startup check', k.au.checks === 0);
+    await k.u.check(true);
+    check('Check now still works when switched off', k.au.checks === 1);
+    k = mkU({ env: { PORTABLE_EXECUTABLE_DIR: 'C:\\x' } });
+    await k.u.check(true);
+    check('portable build explains it cannot self-update', k.au.checks === 0 && /portable/i.test(k.u.getState().unsupported));
+    k = mkU({}, { isPackaged: false });
+    await k.u.check(false);
+    check('running from source never checks', k.au.checks === 0 && /source/i.test(k.u.getState().unsupported));
+    k = mkU();
+    k.au.checkForUpdates = async () => { throw new Error('net::ERR_INTERNET_DISCONNECTED\nmore'); };
+    await k.u.check(true);
+    check('offline error is reported calmly', k.u.getState().state === 'error' && !/\n/.test(k.u.getState().message));
+    const e = mk({});
+    check('update setting defaults on', e.config.settings.checkUpdates === true);
+    e.updateConfig({ settings: { checkUpdates: false } });
+    check('update setting can be turned off', e.config.settings.checkUpdates === false);
+  }
+
   console.log('export');
   {
     const e = mk({});

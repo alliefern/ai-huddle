@@ -38,6 +38,7 @@ const DEFAULTS = {
     contextMessages: 40,
     contextChars: 24000,
     team: 'mixed', // mixed | girls | boys (display names only)
+    checkUpdates: true, // look for a newer AI Huddle on GitHub when the app starts
     userAvatar: '', // '' = initial letter, or 'boy' | 'girl' (pictures in renderer/avatars/you)
     onboarded: false, // false = show the first-run setup screen
   },

@@ -3,9 +3,11 @@ const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const { Engine } = require('./engine');
+const { Updater } = require('./updater');
 
 let win = null;
 let engine = null;
+let updater = null;
 
 // Keep saving to the same folder the app has always used, so a rename never loses your chats.
 app.setPath('userData', path.join(app.getPath('appData'), 'huddle'));
@@ -40,6 +42,24 @@ function createWindow() {
   });
   win.webContents.on('will-navigate', (e) => e.preventDefault());
   win.on('closed', () => (win = null));
+}
+
+function wireUpdater() {
+  let autoUpdater = null;
+  try {
+    autoUpdater = require('electron-updater').autoUpdater; // missing in a plain source checkout: updates just stay off
+  } catch (_) {}
+  updater = new Updater({
+    autoUpdater,
+    app,
+    send: (s) => send('huddle:update', s),
+    isEnabled: () => engine && engine.config.settings.checkUpdates !== false,
+  });
+  ipcMain.handle('huddle:update-state', () => updater.getState());
+  ipcMain.handle('huddle:update-check', () => updater.check(true));
+  ipcMain.handle('huddle:update-install', () => updater.install());
+  // a few seconds after launch, so startup stays quick
+  setTimeout(() => updater.check(false), 8000).unref();
 }
 
 function wireEngine() {
@@ -120,6 +140,7 @@ function wireEngine() {
 
 app.whenReady().then(() => {
   wireEngine();
+  wireUpdater();
   createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

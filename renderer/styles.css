@@ -1832,3 +1832,18 @@ body {
 .avatar-pick.on { outline: 3px solid var(--chart); outline-offset: 2px; box-shadow: var(--pop); }
 .avatar-pick.none { background: var(--card); color: var(--ink); font-weight: 800; font-size: 11px; }
 .sub-h { margin-top: 14px; }
+
+
+.update-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border: 1.5px solid var(--on-side);
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 800;
+}
+.update-bar[hidden] { display: none; }

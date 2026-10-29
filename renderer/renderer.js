@@ -1288,6 +1288,30 @@
         g.append(grid);
         g.append(capHint);
         syncCap();
+        const upd = document.createElement('input');
+        upd.type = 'checkbox';
+        upd.checked = c.settings.checkUpdates !== false;
+        refs.upd = upd;
+        const updRow = document.createElement('div');
+        updRow.className = 'grid';
+        updRow.append(...field('Check for updates at startup', upd));
+        g.append(updRow);
+        const updLine = document.createElement('p');
+        updLine.className = 'hint';
+        updLine.id = 'update-line';
+        updLine.textContent = updateText(state.update);
+        const updBtn = document.createElement('button');
+        updBtn.className = 'btn small';
+        updBtn.textContent = 'Check now';
+        updBtn.addEventListener('click', async () => {
+          state.update = await api.checkUpdate();
+          renderUpdate();
+        });
+        const updNote = document.createElement('p');
+        updNote.className = 'hint';
+        updNote.textContent =
+          'This is the only time AI Huddle contacts anything: it asks GitHub whether a newer version exists and downloads it if so. It sends nothing about you. Switch it off and it never checks (Check now still works).';
+        g.append(updLine, updBtn, updNote);
         const hint = document.createElement('p');
         hint.className = 'hint';
         hint.textContent =
@@ -1356,7 +1380,7 @@
         const about = document.createElement('p');
         about.className = 'hint';
         about.innerHTML =
-          'AI Huddle is free and open source (MIT). Made by <a href="https://alliefern.com" target="_blank" rel="noopener">Allie Fern</a>. It collects nothing: no accounts, no analytics, no phoning home. Everything stays on this computer. Not affiliated with Anthropic, OpenAI or xAI.';
+          'AI Huddle is free and open source (MIT). Made by <a href="https://alliefern.com" target="_blank" rel="noopener">Allie Fern</a>. It collects nothing: no accounts, no analytics. Your chats stay on this computer. The only thing it contacts is GitHub, to check for a newer version (you can switch that off above). Not affiliated with Anthropic, OpenAI or xAI.';
         body.append(about);
       },
       [
@@ -1386,6 +1410,7 @@
               patch.settings[k] = el.type === 'number' ? Number(el.value) : el.value;
             });
             patch.settings.capHandoffs = refs.capSel.value !== 'free';
+            patch.settings.checkUpdates = refs.upd.checked;
             Object.entries(refs.agents).forEach(([id, r]) => {
               patch.agents[id] = {
                 enabled: r.enabled.checked,
@@ -1575,8 +1600,50 @@
     } catch (_) {}
   }
 
+  // ---------- updates ----------
+
+  function updateText(u) {
+    if (!u) return '';
+    switch (u.state) {
+      case 'checking': return 'Checking for updates…';
+      case 'downloading': return 'Downloading update' + (u.latest ? ' ' + u.latest : '') + (u.message ? ' · ' + u.message : '') + '…';
+      case 'ready': return `Version ${u.latest || ''} is ready. It installs when you restart.`.replace('Version  ', 'The update ');
+      case 'current': return `You're up to date (version ${u.version}).`;
+      case 'unsupported': return u.message || u.unsupported || '';
+      case 'error': return 'Update check failed: ' + (u.message || 'unknown error');
+      default: return u.unsupported || `Version ${u.version}`;
+    }
+  }
+
+  function renderUpdate() {
+    const bar = $('#update-bar');
+    const u = state.update;
+    bar.innerHTML = '';
+    if (!u || (u.state !== 'ready' && u.state !== 'downloading')) {
+      bar.hidden = true;
+    } else {
+      bar.hidden = false;
+      const t = document.createElement('span');
+      t.textContent = u.state === 'ready' ? `Update ${u.latest || ''} ready` : updateText(u);
+      bar.append(t);
+      if (u.state === 'ready') {
+        const b = document.createElement('button');
+        b.className = 'btn small';
+        b.textContent = 'Restart to update';
+        b.addEventListener('click', () => api.installUpdate());
+        bar.append(b);
+      }
+    }
+    const line = document.getElementById('update-line');
+    if (line) line.textContent = updateText(u);
+  }
+
   // ---------- boot ----------
 
+  api.onUpdate((u) => {
+    state.update = { ...(state.update || {}), ...u };
+    renderUpdate();
+  });
   api.onMessage(addMessage);
   api.onMessageUpdated(updateMessage);
   api.onStatus((s) => {
@@ -1625,6 +1692,10 @@
     });
     saveSeen();
     renderWho();
+    try {
+      state.update = await api.updateState();
+      renderUpdate();
+    } catch (_) {}
     await refreshSkills();
     if (s.rooms.length) await selectRoom((s.rooms.find((x) => !x.archived) || s.rooms[0]).id);
     recheck();

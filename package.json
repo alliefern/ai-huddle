@@ -13,7 +13,9 @@
     "test": "node test/engine.test.js",
     "dist": "electron-builder --win --publish never",
     "postinstall": "node scripts/get-fonts.js",
-    "predist": "node scripts/get-fonts.js"
+    "predist": "node scripts/get-fonts.js",
+    "release": "electron-builder --win --publish always",
+    "prerelease": "node scripts/get-fonts.js"
   },
   "devDependencies": {
     "electron": "latest",
@@ -28,6 +30,7 @@
       "preload.js",
       "engine.js",
       "skills.js",
+      "updater.js",
       "renderer/**/*",
       "build/icon.png",
       "package.json",
@@ -50,7 +53,15 @@
     },
     "portable": {
       "artifactName": "AI-Huddle-Portable.exe"
-    }
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "alliefern",
+        "repo": "ai-huddle",
+        "releaseType": "release"
+      }
+    ]
   },
   "homepage": "https://alliefern.com",
   "keywords": [
@@ -62,5 +73,8 @@
     "electron",
     "multi-agent",
     "cli"
-  ]
+  ],
+  "dependencies": {
+    "electron-updater": "^6.3.0"
+  }
 }

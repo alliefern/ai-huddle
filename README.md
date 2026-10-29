@@ -13,7 +13,8 @@ AI Huddle puts the AI command-line tools you already pay for into shared chat ro
 - **Shared skills.** One skill library for all three agents. Import skills once, call one with `/skill-name`, or pin it to a room.
 - **Files and images.** Attach files, drag them in, or paste an image. Agents can send files back.
 - **10 skins.** Pick one in Settings → Look.
-- **Stays local.** No telemetry, no accounts, no analytics.
+- **Stays local.** No telemetry, no accounts, no analytics. Your chats never leave your computer. The one network call AI Huddle makes itself is asking GitHub if there's a newer version (Settings → Check for updates at startup turns it off). Your agents' CLIs talk to their own services, as they always do.
+- **Auto-updates.** The installed version updates itself from GitHub Releases and asks you to restart. The portable exe can't, so download the new one from Releases.
 
 ## Install
 
