@@ -37,15 +37,22 @@ build your own installer with `npm run dist` (Windows). on Windows you can also 
 
 ## before you open it, set up the CLIs
 
-AI Huddle drives the command-line tools, so each one you want has to work in a normal terminal first, and you have to be logged in, though you don't need all three.
+AI Huddle drives the command-line tools, so each one you want has to work in a normal terminal first. You only need one of the three.
 
-| agent | see if it works |
-| --- | --- |
-| Claude | `claude -p "say hi"` |
-| Codex | `codex exec --skip-git-repo-check "say hi"` |
-| Grok | `grok -p "say hi"` (install with `irm https://x.ai/cli/install.ps1 \| iex` in PowerShell, then run `grok` once to log in) |
+Each one needs two things done once, in a normal terminal (PowerShell is fine): **install it**, then **log in**. AI Huddle can't do either for you. The tools change their install steps from time to time, so use each tool's own docs if one of these has moved.
 
-after you install one, close AI Huddle and open it again, then use **settings → check my CLIs** to see where each one was found. anything missing shows "not found", and you can switch it off.
+| agent | install and log in | see if it works |
+| --- | --- | --- |
+| Claude | install Claude Code from [Anthropic's docs](https://docs.claude.com/en/docs/claude-code/overview), then run `claude` once and follow the login | `claude -p "say hi"` |
+| Codex | install the Codex CLI from [OpenAI's docs](https://github.com/openai/codex) (it's usually `npm i -g @openai/codex`), then run `codex` once and sign in | `codex exec --skip-git-repo-check "say hi"` |
+| Grok | in PowerShell run `irm https://x.ai/cli/install.ps1 \| iex`, then run `grok` once to log in | `grok -p "say hi"` |
+
+If the "see if it works" command prints a reply, AI Huddle can use that agent. If it asks you to log in, finish that first.
+
+**Seeing "not found" or an error in AI Huddle?**
+- Close AI Huddle and open it again after installing a CLI, so it picks up the new install.
+- Settings → **Check my CLIs** shows where it looked. If the tool works in your terminal but not here, type its full path into that agent's Command box.
+- Don't need all three? Switch the ones you don't use off in Settings.
 
 ## shared skills
 
