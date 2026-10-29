@@ -12,18 +12,22 @@ AI Huddle puts the AI command-line tools you already pay for into shared chat ro
 - **`@claude`, `@codex`, `@grok`, `@all`.** Everyone in a room sees that room's conversation. Agents can tag each other and keep going, with a cap you control so nobody quietly burns through your plan.
 - **Shared skills.** One skill library for all three agents. Import skills once, call one with `/skill-name`, or pin it to a room.
 - **Files and images.** Attach files, drag them in, or paste an image. Agents can send files back.
-- **10 skins.** Pick one in Settings → Look.
+- **Your team, your look.** Pick an all-girls, all-boys or mixed team, an avatar, and one of 10 color skins on first launch. Change any of it later in Settings → Look.
 - **Stays local.** No telemetry, no accounts, no analytics. Your chats never leave your computer. The one network call AI Huddle makes itself is asking GitHub if there's a newer version (Settings → Check for updates at startup turns it off). Your agents' CLIs talk to their own services, as they always do.
 - **Auto-updates.** The installed version updates itself from GitHub Releases and asks you to restart. The portable exe can't, so download the new one from Releases.
 
 ## Install
 
-**Windows (easiest):** grab `AI-Huddle-Setup.exe` from the [Releases](../../releases) page and run it. Windows will say "Windows protected your PC" because the app isn't code-signed (that costs money). Click **More info**, then **Run anyway**.
+**Windows (easiest):** go to the [Releases page](https://github.com/alliefern/ai-huddle/releases/latest), download `AI-Huddle-Setup.exe` and run it. It updates itself after that.
+
+- Windows will say "Windows protected your PC" because the app isn't code-signed (that costs money). Click **More info**, then **Run anyway**.
+- Don't want to install? `AI-Huddle-Portable.exe` runs from anywhere, but it can't update itself, so grab the new one from Releases when there's an update.
+- Your chats and settings live in your AppData folder, so updating or reinstalling never wipes them.
 
 **From source** (Windows, Mac or Linux):
 
 ```
-git clone <this repo>
+git clone https://github.com/alliefern/ai-huddle.git
 cd ai-huddle
 npm install
 npm start
