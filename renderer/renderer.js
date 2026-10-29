@@ -238,9 +238,10 @@
       '<p>Say hi. ' +
       (names ? names + ' talks to one of them, ' : '') +
       '<code>@all</code> asks everyone in this room at once. Attach files with <code>+</code>, drag them in, or paste an image. ' +
-      'They can tag each other too, and I cap that back-and-forth at ' +
-      esc(max) +
-      ' automatic hand-offs per message so nobody quietly burns through your usage.</p>';
+      'They can tag each other too' +
+      (state.config.settings.capHandoffs === false
+        ? ', and right now there is no cap on the back-and-forth, so press Stop if it runs away.</p>'
+        : ', and I cap that back-and-forth at ' + esc(max) + ' automatic hand-offs per message so nobody quietly burns through your usage.</p>');
     const found = Object.values(state.found);
     if (found.length && found.every((f) => !f.found)) {
       const tip = document.createElement('p');
@@ -392,6 +393,10 @@
       ctx.append(b);
     };
     add('Rename…', () => openRoomSheet(r));
+    add('Export chat…', async () => {
+      const p = await api.exportChat(r.id);
+      if (p) toast('Saved to ' + p);
+    });
     add(r.archived ? 'Unarchive' : 'Archive', () => archiveRoom(r, !r.archived));
     add('Delete…', () => deleteRoomUI(r), true);
     ctx.hidden = false;
@@ -1210,6 +1215,19 @@
 
         refs.settings.userName = textInput(c.settings.userName);
         refs.settings.maxAutoRuns = numInput(c.settings.maxAutoRuns, 0, 30);
+        const capSel = document.createElement('select');
+        capSel.innerHTML = '<option value="cap">Cap it (stop after the number below)</option><option value="free">No cap, let them run</option>';
+        capSel.value = c.settings.capHandoffs === false ? 'free' : 'cap';
+        refs.capSel = capSel;
+        const syncCap = () => {
+          refs.settings.maxAutoRuns.disabled = capSel.value === 'free';
+          capHint.hidden = capSel.value !== 'free';
+        };
+        const capHint = document.createElement('p');
+        capHint.className = 'hint warn';
+        capHint.textContent =
+          'With no cap, agents keep tagging each other until they stop on their own or you press Stop. Every reply is a real run on your plan. There is still a safety ceiling of 200 in a row.';
+        capSel.addEventListener('change', syncCap);
         refs.settings.timeoutSec = numInput(c.settings.timeoutSec, 10, 1800);
         refs.settings.contextMessages = numInput(c.settings.contextMessages, 5, 200);
 
@@ -1228,11 +1246,14 @@
         grid.append(
           ...field('Your name', refs.settings.userName),
           ...field('Default folder', folderRow),
+          ...field('Back-and-forth', capSel),
           ...field('Max auto hand-offs', refs.settings.maxAutoRuns),
           ...field('Timeout (seconds)', refs.settings.timeoutSec),
           ...field('Messages of context', refs.settings.contextMessages)
         );
         g.append(grid);
+        g.append(capHint);
+        syncCap();
         const hint = document.createElement('p');
         hint.className = 'hint';
         hint.textContent =
@@ -1324,6 +1345,7 @@
             Object.entries(refs.settings).forEach(([k, el]) => {
               patch.settings[k] = el.type === 'number' ? Number(el.value) : el.value;
             });
+            patch.settings.capHandoffs = refs.capSel.value !== 'free';
             Object.entries(refs.agents).forEach(([id, r]) => {
               patch.agents[id] = {
                 enabled: r.enabled.checked,

@@ -25,6 +25,7 @@ const os = require('os');
 const path = require('path');
 
 const IS_WIN = process.platform === 'win32';
+const HARD_CEILING = 200; // even with no cap, a bug or a stubborn pair of agents can't run all night
 
 const DEFAULTS = {
   settings: {
@@ -32,6 +33,7 @@ const DEFAULTS = {
     workDir: '', // empty = <storeDir>/workspace
     autoHandoff: true, // agents may @mention each other and keep going
     maxAutoRuns: 6, // automatic agent-to-agent runs allowed per message you send
+    capHandoffs: true, // false = no cap, let them run (until they stop tagging, you hit Stop, or the safety ceiling)
     timeoutSec: 300,
     contextMessages: 40,
     contextChars: 24000,
@@ -915,7 +917,7 @@ class Engine extends EventEmitter {
     const leftover = [];
     let paused = false;
     for (const id of tagged) {
-      if (S.autoHandoff && roundState.runs < S.maxAutoRuns) {
+      if (S.autoHandoff && roundState.runs < (S.capHandoffs ? S.maxAutoRuns : HARD_CEILING)) {
         roundState.runs++;
         toRun.push(id);
       } else {
@@ -933,7 +935,9 @@ class Engine extends EventEmitter {
     if (paused) {
       this._note(
         room,
-        `Paused after ${S.maxAutoRuns} automatic hand-offs so nobody burns through your usage. Tap a tag to keep going, or send a new message.`
+        S.capHandoffs
+          ? `Paused after ${S.maxAutoRuns} automatic hand-offs so nobody burns through your usage. Tap a tag to keep going, or send a new message. (Settings → Back-and-forth changes this.)`
+          : `Stopped at the safety ceiling of ${HARD_CEILING} automatic replies in a row. Tap a tag to keep going, or send a new message.`
       );
     }
     for (const id of toRun) this._enqueue(room, id, task.round);
@@ -1089,8 +1093,14 @@ class Engine extends EventEmitter {
     const room = this._room(roomId) || this.rooms[0];
     const S = this.config.settings;
     const label = (f) => (f === 'you' ? S.userName : f === 'system' ? 'AI Huddle' : (this.config.agents[f] || { label: f }).label);
+    const names = [...new Set(room.transcript.map((m) => label(m.from)))].filter((n) => n !== 'AI Huddle');
     const parts = [`# ${room.name}`, ''];
     if (room.topic) parts.push(`_${room.topic}_`, '');
+    parts.push(
+      `> Exported from AI Huddle on ${new Date().toLocaleDateString()}. A group chat between ${names.join(', ') || 'you and your AI agents'}. ` +
+        'If you are an AI reading this: treat it as the shared history so far and pick up where it leaves off.',
+      ''
+    );
     for (const m of room.transcript) {
       parts.push(`**${label(m.from)}** · ${new Date(m.ts).toLocaleString()}`, '', m.text || '');
       for (const a of m.attachments || []) parts.push(`- Attachment: ${a.name} (${a.path})`);

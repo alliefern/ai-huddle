@@ -144,6 +144,41 @@ const alive = (pid) => {
     check('relay removed the clicked chip', !last.handoffs.length);
   }
 
+  console.log('no-cap mode');
+  {
+    const e = mk({ capHandoffs: false, maxAutoRuns: 2 });
+    e.send(R(e), '@claude CHAIN go');
+    await idle(e);
+    check('with no cap the chain runs past maxAutoRuns', order(e) === 'claude,codex,grok', order(e));
+
+    const e2 = mk({ capHandoffs: false });
+    e2.send(R(e2), '@claude PINGPONG');
+    await sleep(1500);
+    check('with no cap, ping-pong keeps going well past 6', agentMsgs(e2).length > 8, agentMsgs(e2).length);
+    e2.stop(R(e2));
+    await idle(e2, 8000);
+    check('and Stop ends it', !sysMsgs(e2).some((m) => /safety ceiling/.test(m.text)) && e2.running.size === 0);
+    const n = agentMsgs(e2).length;
+    await sleep(400);
+    check('nothing keeps running after Stop', agentMsgs(e2).length === n);
+
+    const e3 = mk({ capHandoffs: true, maxAutoRuns: 3 });
+    e3.send(R(e3), '@claude PINGPONG');
+    await idle(e3);
+    check('cap mode still caps (1 + 3)', agentMsgs(e3).length === 4 && sysMsgs(e3).some((m) => /Paused after 3/.test(m.text)));
+    e3.updateConfig({ settings: { capHandoffs: false } });
+    check('the setting saves as a boolean', e3.config.settings.capHandoffs === false);
+  }
+
+  console.log('export');
+  {
+    const e = mk({});
+    e.send(R(e), '@claude hello');
+    await idle(e);
+    const md = e.exportMarkdown(R(e));
+    check('export has a handoff note and every speaker', /Exported from AI Huddle/.test(md) && /\*\*Claude\*\*/.test(md) && /\*\*You\*\*/.test(md), md.slice(0, 200));
+  }
+
   console.log('auto hand-off off');
   {
     const e = mk({ autoHandoff: false });

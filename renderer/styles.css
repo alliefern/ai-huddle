@@ -169,7 +169,8 @@ body {
 .side .brand {
   display: flex;
   align-items: center;
-  gap: 12px;
+  flex-wrap: wrap;
+  gap: 8px 12px;
   padding: 18px 18px 14px;
 }
 
@@ -196,10 +197,7 @@ body {
 }
 
 .brand-text {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  min-width: 0;
+  display: contents; /* title sits beside the star, credit drops to its own full-width row */
 }
 
 .by {
@@ -209,7 +207,10 @@ body {
   text-transform: uppercase;
   color: var(--on-side);
   text-decoration: none;
-  white-space: nowrap;
+  flex: 1 0 100%;
+  white-space: normal;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .by:hover,
@@ -1453,10 +1454,6 @@ body {
 @media (max-width: 820px) {
   .side {
     width: 190px;
-  }
-  .by {
-    white-space: normal;
-    line-height: 1.35;
   }
   .room-title h2 {
     font-size: 28px;
