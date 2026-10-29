@@ -69,7 +69,7 @@ After installing one, close AI Huddle and reopen it, then use **Settings → Che
 
 ## Fonts
 
-The default skin uses Gopher headings and Bricolage Grotesque text. The Gopher font isn't included, so you'll get a system font unless you put your own copy in `renderer/fonts/` (see the README.txt in there). Bricolage Grotesque is free on Google Fonts.
+The default skin uses Gopher headings and Bricolage Grotesque text. Bricolage Grotesque is free and open, and `npm install` fetches it for you. Gopher is a licensed font and isn't included, so headings use Bricolage Grotesque unless you drop your own copy of Gopher in `renderer/fonts/` (see the README.txt in there).
 
 ## Development
 

@@ -1,14 +1,11 @@
-Put your font files in this folder. AI Huddle works without them (it falls back to a system font),
-but the default skin only looks like alliefern.com once these are here.
+Fonts
 
-  BricolageGrotesque.ttf     body text, labels, buttons
-                             Free on Google Fonts. Download the family, take the variable font
-                             file (it has "wght" in the name), and rename it to BricolageGrotesque.ttf
+Bricolage Grotesque (body text, and the fallback for headings)
+  Free and open (SIL Open Font License). npm install copies it here automatically
+  as BricolageGrotesque.woff2, so you don't need to do anything.
 
-  Gopher.otf                 big headers (the app name, Settings, the empty-chat heading)
-                             Any one of these names works: Gopher.otf, Gopher.ttf, Gopher.woff2
-                             Gopher is a licensed font, so it is NOT included in the public repo.
+Gopher (big headers on the author's own build)
+  A licensed font, so it is NOT in the public repo. If you own a copy, drop it here as
+  Gopher.otf, Gopher.ttf or Gopher.woff2 and restart. Without it, headings use Bricolage Grotesque.
 
-If a font is already installed on your computer, AI Huddle uses that and you can skip the file.
-
-After adding files, restart AI Huddle. If you build the .exe, they get packed inside it.
+An installed copy of either font on your computer is used first.

@@ -13,7 +13,7 @@
 @font-face {
   font-family: 'Bricolage Grotesque';
   src: local('Bricolage Grotesque'), local('BricolageGrotesque'),
-    url('fonts/BricolageGrotesque.ttf') format('truetype');
+    url('fonts/BricolageGrotesque.woff2') format('woff2'), url('fonts/BricolageGrotesque.ttf') format('truetype');
   font-weight: 200 800;
   font-style: normal;
   font-display: swap;

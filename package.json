@@ -11,11 +11,14 @@
   "scripts": {
     "start": "electron .",
     "test": "node test/engine.test.js",
-    "dist": "electron-builder --win --publish never"
+    "dist": "electron-builder --win --publish never",
+    "postinstall": "node scripts/get-fonts.js",
+    "predist": "node scripts/get-fonts.js"
   },
   "devDependencies": {
     "electron": "latest",
-    "electron-builder": "latest"
+    "electron-builder": "latest",
+    "@fontsource-variable/bricolage-grotesque": "^5.0.0"
   },
   "build": {
     "appId": "com.alliefern.aihuddle",
@@ -27,7 +30,8 @@
       "skills.js",
       "renderer/**/*",
       "build/icon.png",
-      "package.json"
+      "package.json",
+      "!renderer/fonts/*.md"
     ],
     "win": {
       "target": [
