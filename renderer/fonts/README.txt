@@ -1,11 +1,11 @@
-Fonts
+fonts
 
 Bricolage Grotesque (body text, and the fallback for headings)
-  Free and open (SIL Open Font License). npm install copies it here automatically
-  as BricolageGrotesque.woff2, so you don't need to do anything.
+  this one is free and open, under the SIL Open Font License. npm install copies it here
+  as BricolageGrotesque.woff2, so you don't have to do anything.
 
-Gopher (big headers on the author's own build)
-  A licensed font, so it is NOT in the public repo. If you own a copy, drop it here as
-  Gopher.otf, Gopher.ttf or Gopher.woff2 and restart. Without it, headings use Bricolage Grotesque.
+Gopher (the big headers on my own build)
+  Gopher is a licensed font, so it isn't in the public repo. if you own a copy, drop it here as
+  Gopher.otf, Gopher.ttf or Gopher.woff2 and restart. without it, headings use Bricolage Grotesque.
 
-An installed copy of either font on your computer is used first.
+if either font is already installed on your computer, I use that copy first.

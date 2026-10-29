@@ -1,30 +1,30 @@
 <h1 align="center">✶ AI Huddle ✶</h1>
-<p align="center"><b>Claude, Codex and Grok in one chat app. On your computer. No API keys.</b><br>
-<sub>BROUGHT TO YOU BY <a href="https://alliefern.com">ALLIE FERN</a></sub></p>
+<p align="center"><b>Claude, Codex and Grok in one chat app on your computer, using the CLIs you're already logged into, so you don't need API keys.</b><br>
+<sub>brought to you by <a href="https://alliefern.com">Allie Fern</a></sub></p>
 
-![AI Huddle screenshot](docs/screenshot.png)
+![screenshot of AI Huddle](docs/screenshot.png)
 
-AI Huddle puts the AI command-line tools you already pay for into shared chat rooms. Make a room per topic, `@mention` whoever you want, and let them talk to each other too. Everything runs locally through the CLIs you're already logged into, so there are no API keys, no accounts, and no data leaving your computer except what those CLIs send themselves.
+I built AI Huddle so the command-line tools you already pay for can share chat rooms. you make a room per topic, `@mention` whoever you want, and they can talk to each other too. I keep the chats on your computer, and the agents run through the command-line tools you're logged into. I don't ask for API keys or an account, and if anything leaves your computer, it's because one of those command-line tools sent it.
 
-## What it does
+## what it does
 
-- **Rooms.** One per topic. Each room has its own history, topic, members, and working folder. Rename, archive or delete them from the ⋯ menu that appears when you hover a room.
-- **`@claude`, `@codex`, `@grok`, `@all`.** Everyone in a room sees that room's conversation. Agents can tag each other and keep going, with a cap you control so nobody quietly burns through your plan.
-- **Shared skills.** One skill library for all three agents. Import skills once, call one with `/skill-name`, or pin it to a room.
-- **Files and images.** Attach files, drag them in, or paste an image. Agents can send files back.
-- **Your team, your look.** Pick an all-girls, all-boys or mixed team, an avatar, and one of 10 color skins on first launch. Change any of it later in Settings → Look.
-- **Stays local.** No telemetry, no accounts, no analytics. Your chats never leave your computer. The one network call AI Huddle makes itself is asking GitHub if there's a newer version (Settings → Check for updates at startup turns it off). Your agents' CLIs talk to their own services, as they always do.
-- **Auto-updates.** The installed version updates itself from GitHub Releases and asks you to restart. The portable exe can't, so download the new one from Releases.
+- **rooms.** each topic gets its own room, with its own history, topic, members, and working folder. hover a room and the ⋯ menu is where you rename it, archive it, or delete it.
+- **`@claude`, `@codex`, `@grok`, `@all`.** everyone in a room sees that room's conversation. agents can tag each other and keep going, and you can cap that so they don't burn through your plan.
+- **shared skills.** there's one skill library, and Claude, Codex and Grok all use it. you import a skill once, call it with `/skill-name`, or pin it to a room.
+- **files and images.** you can attach files, drag them in, or paste an image. agents can send files back.
+- **your team, your look.** pick an all-girls, all-boys or mixed team, an avatar, and one of 10 color skins the first time you open it. change any of it later in settings → look.
+- **on your computer.** I don't add telemetry, accounts or analytics, and your chats never leave your computer. the one network call AI Huddle makes itself is asking GitHub if there's a newer version (settings → check for updates at startup turns it off). your agents' CLIs talk to their own services, like they always do.
+- **auto-updates.** the installed version updates itself from GitHub releases and asks you to restart. the portable exe can't, so download the new one from releases.
 
-## Install
+## install
 
-**Windows (easiest):** go to the [Releases page](https://github.com/alliefern/ai-huddle/releases/latest), download `AI-Huddle-Setup.exe` and run it. It updates itself after that.
+**Windows (the easy way):** go to the [releases page](https://github.com/alliefern/ai-huddle/releases/latest), download `AI-Huddle-Setup.exe` and run it. it updates itself after that.
 
-- Windows will say "Windows protected your PC" because the app isn't code-signed (that costs money). Click **More info**, then **Run anyway**.
-- Don't want to install? `AI-Huddle-Portable.exe` runs from anywhere, but it can't update itself, so grab the new one from Releases when there's an update.
-- Your chats and settings live in your AppData folder, so updating or reinstalling never wipes them.
+- Windows will say "Windows protected your PC" because the app isn't code-signed, and that costs money. click **More info**, then **Run anyway**.
+- don't want to install? `AI-Huddle-Portable.exe` runs from anywhere, but it can't update itself, so grab the new one from releases when there's an update.
+- your chats and settings live in your AppData folder, so updating or reinstalling never wipes them.
 
-**From source** (Windows, Mac or Linux):
+**from source** (Windows, Mac or Linux):
 
 ```
 git clone https://github.com/alliefern/ai-huddle.git
@@ -33,50 +33,50 @@ npm install
 npm start
 ```
 
-Build your own installer with `npm run dist` (Windows). On Windows you can also double-click `start.bat` or `build.bat`.
+build your own installer with `npm run dist` (Windows). on Windows you can also double-click `start.bat` or `build.bat`.
 
-## Before you open it: set up the CLIs
+## before you open it, set up the CLIs
 
-AI Huddle drives the command-line tools, so each one you want to use has to work in a normal terminal first, logged in. You only need one.
+AI Huddle drives the command-line tools, so each one you want has to work in a normal terminal first, and you have to be logged in, though you don't need all three.
 
-| Agent | Check it works |
+| agent | see if it works |
 | --- | --- |
 | Claude | `claude -p "say hi"` |
 | Codex | `codex exec --skip-git-repo-check "say hi"` |
-| Grok | `grok -p "say hi"` (install: `irm https://x.ai/cli/install.ps1 \| iex` in PowerShell, then run `grok` once to log in) |
+| Grok | `grok -p "say hi"` (install with `irm https://x.ai/cli/install.ps1 \| iex` in PowerShell, then run `grok` once to log in) |
 
-After installing one, close AI Huddle and reopen it, then use **Settings → Check my CLIs** to see where each was found. Anything missing shows "not found" and you can switch it off.
+after you install one, close AI Huddle and open it again, then use **settings → check my CLIs** to see where each one was found. anything missing shows "not found", and you can switch it off.
 
-## Shared skills
+## shared skills
 
-- Click **Skills** in the sidebar. Import a skill folder, a folder of skills, a `.skill` or `.zip` file, or pull from another tool's skills folder (it detects `~/.claude/skills` and similar).
-- A skill is a folder with a `SKILL.md` (optional `name` and `description` at the top, then instructions).
-- Type `/skill-name` in a message (a menu pops up as you type `/`) and its full instructions go into the prompt for every agent that runs on that message. Or pin it to a room under Room → Pinned skills.
-- Importing makes a copy. Your original folders aren't touched or kept in sync.
-- Skills are plain instructions pasted into a prompt. Only import ones you trust.
+- click **skills** in the sidebar. you can import a skill folder, a folder of skills, a `.skill` or `.zip` file, or pull from another tool's skills folder. it looks for `~/.claude/skills` and similar folders.
+- a skill is a folder with a `SKILL.md`. `name` and `description` at the top are optional, and the rest is the instructions.
+- type `/skill-name` in a message. a menu pops up as you type `/`, and the full instructions go into the prompt for every agent that runs on that message. you can also pin a skill to a room under room → pinned skills.
+- importing makes a copy. I leave your original folders alone, and I don't keep them in sync.
+- skills are plain instructions that get pasted into a prompt. if you don't trust one, skip it.
 
-## Files and images
+## files and images
 
-- Up to 10 files per message, 25 MB each. Use the **+** button, drag them onto the window, or paste an image.
-- Files are copied into a `huddle-files` folder inside the room's working folder and the agents are told the path. Whether an agent can actually *look at* an image depends on that CLI's own tools.
-- Agents can send you files with a fenced block starting ` ```file:name.md ` (Huddle saves the text) or by saving a file and putting `[[file: path]]` on its own line. Files outside the room's folder are refused.
+- up to 10 files per message, 25 MB each. use the **+** button, drag them onto the window, or paste an image.
+- I copy files into a `huddle-files` folder inside the room's working folder, and I tell the agents the path. whether an agent can look at an image depends on that CLI's own tools.
+- agents can send you files with a fenced block starting ` ```file:name.md ` (I save the text) or by saving a file and putting `[[file: path]]` on its own line. if a file is outside the room's folder, I refuse it.
 
-## Be aware
+## be aware
 
-- **Every reply uses your real plan limits.** `@all` is three runs. Two agents ping-ponging is a lot of runs. Settings → Back-and-forth is the guardrail: cap it (default 6 per message) or choose "No cap, let them run" (Stop always works, and there is a hard ceiling of 200).
-- **Pick your team.** All girls (Claudette, Codexa, Grokette), all boys (Claude, Codex, Grok) or mixed (Claude, Codexa, Grok). First launch walks you through your name, team and color skin, and Settings has it all later.
-- **Usage bars.** Each agent in the sidebar has a bar and percentage against a daily budget you set. It counts runs AI Huddle started, so it is your own budget, not your plan's real limit.
-- **Leaving?** Hover a room, hit ⋯ → Export chat. You get one Markdown file of the whole conversation, every bot's replies included, ready to upload to any single AI.
-- **No permission flags are added.** Each CLI runs with its own defaults. If you add something like a skip-permissions flag, that agent can act on your files without asking, in the room's folder.
-- Agents are told not to touch files unless you ask. That's an instruction, not a lock.
-- Check each provider's terms for how you're allowed to use their CLI. This app only runs the tools on your own computer, for you.
-- Not affiliated with or endorsed by Anthropic, OpenAI or xAI. Claude, Codex, ChatGPT and Grok are their respective owners' trademarks.
+- **every reply uses your real plan limits.** `@all` is three runs. if two agents keep answering each other, that adds up. settings → back-and-forth is where you cap it (the default is 6 per message) or choose "no cap, let them run". you can hit stop whenever you want, and even with no cap I cut them off at 200 replies in a row.
+- **pick your team.** all girls (Claudette, Codexa, Grokette), all boys (Claude, Codex, Grok), or mixed (Claude, Codexa, Grok). the first time you open the app I ask for your name, then your team, then a color skin. settings has all of that later.
+- **usage bars.** each agent in the sidebar has a bar and a percentage for a daily budget you set. I count runs AI Huddle started. that number is a budget you chose, and I can't see the real limit on your plan.
+- **if you want the chat somewhere else,** hover a room and hit ⋯ → export chat. you get one Markdown file of the whole conversation, with every bot's replies included, and you can upload that file to any single AI.
+- **I don't add permission flags.** each CLI runs with its own defaults. if you add something like a skip-permissions flag, that agent can act on your files without asking, in the room's folder.
+- I tell the agents not to touch files unless you ask. that line is in the prompt I send them, so it won't stop an agent that ignores it.
+- check each provider's terms for how you're allowed to use their CLI. this app runs the tools on your own computer, for you.
+- AI Huddle isn't affiliated with or endorsed by Anthropic, OpenAI or xAI. Claude, Codex, ChatGPT and Grok are their respective owners' trademarks.
 
-## Fonts
+## fonts
 
-The default skin uses Gopher headings and Bricolage Grotesque text. Bricolage Grotesque is free and open, and `npm install` fetches it for you. Gopher is a licensed font and isn't included, so headings use Bricolage Grotesque unless you drop your own copy of Gopher in `renderer/fonts/` (see the README.txt in there).
+the default skin uses Gopher for headings and Bricolage Grotesque for the text. Bricolage Grotesque is free and open, and `npm install` fetches it for you. Gopher is a licensed font, so I left it out of the repo. headings use Bricolage Grotesque unless you drop your own copy of Gopher in `renderer/fonts/` (see the README.txt in there).
 
-## Development
+## development
 
 ```
 npm test        # engine tests against fake agents, uses zero real usage
@@ -84,13 +84,13 @@ npm start       # run the app
 npm run dist    # build the Windows installer + portable exe into dist/
 ```
 
-- `engine.js`: rooms, routing, hand-offs, attachments, running the CLIs. No Electron in it.
-- `skills.js`: the shared skill library.
-- `main.js`, `preload.js`: the Electron shell.
-- `renderer/`: the window. Skins are just CSS variables at the top of `styles.css` plus a list in `theme.js`.
+- `engine.js` handles rooms, routing, hand-offs, attachments, and running the CLIs. it doesn't use Electron.
+- `skills.js` holds the shared skill library.
+- `main.js` and `preload.js` are the Electron shell.
+- `renderer/` draws the window. skins are CSS variables at the top of `styles.css`, and the list of them is in `theme.js`.
 
-Releases are built by GitHub Actions when you push a tag like `v0.1.0`.
+GitHub Actions builds the release when you push a tag like `v0.1.0`.
 
-## License
+## license
 
-MIT. Made by [Allie Fern](https://alliefern.com).
+MIT. made by [Allie Fern](https://alliefern.com).

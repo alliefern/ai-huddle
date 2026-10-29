@@ -1,7 +1,7 @@
 {
   "name": "ai-huddle",
   "version": "0.1.0",
-  "description": "One chat room for Claude, Codex and Grok. Local, no API keys, uses the CLIs you're already logged into.",
+  "description": "a local chat room for Claude, Codex and Grok, using the CLIs you're already logged into, so you don't need API keys.",
   "main": "main.js",
   "author": {
     "name": "Allie Fern",

@@ -10,7 +10,7 @@ try {
   if (!pick) throw new Error('font file not found in package');
   const dest = path.join(__dirname, '..', 'renderer', 'fonts', 'BricolageGrotesque.woff2');
   fs.copyFileSync(path.join(dir, pick), dest);
-  console.log('Bricolage Grotesque installed:', pick);
+  console.log('copied Bricolage Grotesque:', pick);
 } catch (e) {
-  console.log('Skipped font copy (' + e.message + '). AI Huddle will use a system font instead.');
+  console.log('I skipped the font copy (' + e.message + '). AI Huddle will use a system font instead.');
 }

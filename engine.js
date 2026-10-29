@@ -316,7 +316,7 @@ class Engine extends EventEmitter {
       fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf8');
       fs.renameSync(tmp, this.storeFile);
     } catch (e) {
-      this.emit('error-note', 'Could not save chat history: ' + e.message);
+      this.emit('error-note', "I couldn't save the chat history: " + e.message);
     }
   }
 
@@ -461,7 +461,7 @@ class Engine extends EventEmitter {
     if ('archived' in p) {
       const want = !!p.archived;
       if (want && !room.archived) {
-        if (this._activeCount() <= 1) this.emit('error-note', "Can't archive your only active room. Make another room first.");
+        if (this._activeCount() <= 1) this.emit('error-note', "I can't archive your only active room. make another room first.");
         else {
           this.stop(id, true); // nothing keeps running in an archived room
           room.archived = true;
@@ -514,7 +514,7 @@ class Engine extends EventEmitter {
     try {
       buf = Buffer.isBuffer(data) ? data : Buffer.from(data && data.buffer ? data.buffer : data || []);
     } catch (_) {
-      return { error: `Couldn't read ${base}.` };
+      return { error: `I couldn't read ${base}.` };
     }
     if (buf.length > MAX_FILE_BYTES) return { error: `${base} is over ${Math.round(MAX_FILE_BYTES / 1048576)} MB, so I left it out.` };
     const dir = path.join(this.workDir(room.id), 'huddle-files');
@@ -529,7 +529,7 @@ class Engine extends EventEmitter {
       this.files.add(path.resolve(p));
       return this._describeFile(p, name, mime);
     } catch (e) {
-      return { error: `Couldn't save ${base}: ${e.message}` };
+      return { error: `I couldn't save ${base}: ${e.message}` };
     }
   }
 
@@ -552,14 +552,14 @@ class Engine extends EventEmitter {
       try {
         const real = fs.realpathSync(abs);
         const st = fs.statSync(real);
-        if (!this._inside(fs.realpathSync(wd), real)) return `(Couldn't attach ${p}: it's outside this room's folder.)`;
-        if (!st.isFile()) return `(Couldn't attach ${p}: not a file.)`;
-        if (st.size > MAX_FILE_BYTES) return `(Couldn't attach ${p}: too big.)`;
+        if (!this._inside(fs.realpathSync(wd), real)) return `(I couldn't attach ${p}, because it's outside this room's folder.)`;
+        if (!st.isFile()) return `(I couldn't attach ${p}, because that path isn't a file.)`;
+        if (st.size > MAX_FILE_BYTES) return `(I couldn't attach ${p}, because it's over the size limit.)`;
         this.files.add(path.resolve(real));
         attachments.push(this._describeFile(real, path.basename(real)));
         return '';
       } catch (_) {
-        return `(Couldn't attach ${p}: file not found.)`;
+        return `(I couldn't attach ${p}, and I couldn't find that file.)`;
       }
     });
     return { text: out.replace(/\n{3,}/g, '\n\n').trim(), attachments };
@@ -791,14 +791,14 @@ class Engine extends EventEmitter {
     this.rounds.set(round, { runs: 0 });
 
     if (!members.length) {
-      this._note(room, `Nobody in ${room.name} is switched on. Add an agent in the room settings, or switch one on in Settings.`, 'error');
+      this._note(room, `nobody in ${room.name} is switched on. add an agent in the room settings, or switch one on in settings.`, 'error');
       return msg;
     }
 
     const { hit, outside } = this._findMentions(room, text, { allowAll: true });
     if (outside.length) {
       const names = outside.map((id) => this.config.agents[id].label).join(', ');
-      this._note(room, `${names} ${outside.length > 1 ? "aren't" : "isn't"} in ${room.name}. Add them in the room settings.`);
+      this._note(room, `${names} ${outside.length > 1 ? "aren't" : "isn't"} in ${room.name}. you can add them in the room settings.`);
     }
     let targets = hit;
     if (!targets.length && !outside.length) {
@@ -857,7 +857,7 @@ class Engine extends EventEmitter {
         .forEach((k) => delete this.queues[k]);
       runs.forEach((e) => killTree(e.child));
       const room = this._room(rid);
-      if (had && !silent && room) this._note(room, 'Stopped. Nothing else runs here until you send another message.');
+      if (had && !silent && room) this._note(room, 'I stopped this room. nothing else runs here until you send another message.');
     }
     this._emitStatus();
   }
@@ -904,7 +904,7 @@ class Engine extends EventEmitter {
     try {
       this._handleResult(room, task.agent, agent, task, result);
     } catch (e) {
-      this._note(room, `Internal error handling ${agent.label}'s reply: ${e.message}`, 'error');
+      this._note(room, `I hit an error while handling ${agent.label}'s reply: ${e.message}`, 'error');
     }
     this._emitStatus();
     this._pump(key);
@@ -928,7 +928,7 @@ class Engine extends EventEmitter {
     if (notFound) {
       this._note(
         room,
-        `Couldn't start \`${agent.command}\`. Is the ${agent.label} CLI installed, logged in, and reachable? Settings → "Check my CLIs" shows where Huddle is looking.`,
+        `I couldn't start \`${agent.command}\`. check that the ${agent.label} CLI is installed, that you're logged in, and that I can reach it. settings → check my CLIs shows where I'm looking.`,
         'error'
       );
       return;
@@ -984,8 +984,8 @@ class Engine extends EventEmitter {
       this._note(
         room,
         S.capHandoffs
-          ? `Paused after ${S.maxAutoRuns} automatic hand-offs so nobody burns through your usage. Tap a tag to keep going, or send a new message. (Settings → Back-and-forth changes this.)`
-          : `Stopped at the safety ceiling of ${HARD_CEILING} automatic replies in a row. Tap a tag to keep going, or send a new message.`
+          ? `paused after ${S.maxAutoRuns} automatic hand-offs, so they don't burn through your usage. tap a tag if you want to keep going, or send a new message. you can change this in settings → back-and-forth.`
+          : `I hit the safety ceiling of ${HARD_CEILING} automatic replies in a row, so I stopped. tap a tag if you want to keep going, or send a new message.`
       );
     }
     for (const id of toRun) this._enqueue(room, id, task.round);
@@ -1064,7 +1064,7 @@ class Engine extends EventEmitter {
     if (shim && usesArg) {
       return {
         error: new Error(
-          `${agent.command} is a .cmd shim, and Windows can't pass a long multi-line prompt to those as an argument. In Settings, set "Prompt goes in via" to stdin or a temp file for ${agent.label}.`
+          `${agent.command} is a .cmd shim, and Windows can't pass a long multi-line prompt to those as an argument. in settings, set "prompt goes in via" to stdin or a temp file for ${agent.label}.`
         ),
         stdout: '',
         stderr: '',
@@ -1145,13 +1145,13 @@ class Engine extends EventEmitter {
     const parts = [`# ${room.name}`, ''];
     if (room.topic) parts.push(`_${room.topic}_`, '');
     parts.push(
-      `> Exported from AI Huddle on ${new Date().toLocaleDateString()}. A group chat between ${names.join(', ') || 'you and your AI agents'}. ` +
-        'If you are an AI reading this: treat it as the shared history so far and pick up where it leaves off.',
+      `> exported from AI Huddle on ${new Date().toLocaleDateString()}. a group chat between ${names.join(', ') || 'you and your AI agents'}. ` +
+        "if you're an AI reading this, treat it as the shared history so far and pick up where it leaves off.",
       ''
     );
     for (const m of room.transcript) {
       parts.push(`**${label(m.from)}** · ${new Date(m.ts).toLocaleString()}`, '', m.text || '');
-      for (const a of m.attachments || []) parts.push(`- Attachment: ${a.name} (${a.path})`);
+      for (const a of m.attachments || []) parts.push(`- attachment: ${a.name} (${a.path})`);
       parts.push('');
     }
     return parts.join('\n');

@@ -171,14 +171,14 @@ class SkillStore {
         else {
           tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'huddle-skill-'));
           if (!extractArchive(src, tmp)) {
-            res.failed.push(`${path.basename(src)}: couldn't unzip it`);
+            res.failed.push(`${path.basename(src)}: I couldn't unzip it`);
             return res;
           }
           root = tmp;
         }
       }
       const found = findSkillDirs(root);
-      if (!found.length) res.failed.push(`${path.basename(src)}: no SKILL.md found in it`);
+      if (!found.length) res.failed.push(`${path.basename(src)}: there's no SKILL.md in it`);
       for (const d of found) {
         // a bundle unzipped to a temp folder may have a meaningless folder name; prefer the skill's own name
         let slug = slugOf(path.basename(d));
@@ -187,7 +187,7 @@ class SkillStore {
           if ((tmp && d === tmp) || /^huddle-skill-/.test(slug)) slug = slugOf(nm || slug);
         } catch (_) {}
         if (!slug) {
-          res.failed.push(`${d}: no usable name`);
+          res.failed.push(`${d}: I couldn't find a name I can use`);
           continue;
         }
         const dest = path.join(this.dir, slug);

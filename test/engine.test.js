@@ -135,7 +135,7 @@ const alive = (pid) => {
     check('1 + maxAutoRuns replies then stops', agentMsgs(e).length === 5, order(e));
     const last = agentMsgs(e).pop();
     check('last message keeps a tag so you can continue', last.handoffs && last.handoffs.length === 1, last);
-    check('pause note posted', sysMsgs(e).some((m) => /Paused after 4/.test(m.text)));
+    check('pause note posted', sysMsgs(e).some((m) => /paused after 4/.test(m.text)));
 
     const before = agentMsgs(e).length;
     e.relay(R(e), last.handoffs[0], last.id);
@@ -165,7 +165,7 @@ const alive = (pid) => {
     const e3 = mk({ capHandoffs: true, maxAutoRuns: 3 });
     e3.send(R(e3), '@claude PINGPONG');
     await idle(e3);
-    check('cap mode still caps (1 + 3)', agentMsgs(e3).length === 4 && sysMsgs(e3).some((m) => /Paused after 3/.test(m.text)));
+    check('cap mode still caps (1 + 3)', agentMsgs(e3).length === 4 && sysMsgs(e3).some((m) => /paused after 3/.test(m.text)));
     e3.updateConfig({ settings: { capHandoffs: false } });
     check('the setting saves as a boolean', e3.config.settings.capHandoffs === false);
   }
@@ -255,7 +255,7 @@ const alive = (pid) => {
     e.send(R(e), '@claude hello');
     await idle(e);
     const md = e.exportMarkdown(R(e));
-    check('export has a handoff note and every speaker', /Exported from AI Huddle/.test(md) && /\*\*Claude\*\*/.test(md) && /\*\*You\*\*/.test(md), md.slice(0, 200));
+    check('export has a handoff note and every speaker', /exported from AI Huddle/.test(md) && /\*\*Claude\*\*/.test(md) && /\*\*You\*\*/.test(md), md.slice(0, 200));
   }
 
   console.log('auto hand-off off');
@@ -303,7 +303,7 @@ const alive = (pid) => {
     await idle(e, 8000);
     check('process was killed', !alive(pid));
     check('no agent message posted after stop', agentMsgs(e).length === 0, order(e));
-    check('stopped note posted', sysMsgs(e).some((m) => /Stopped/.test(m.text)));
+    check('stopped note posted', sysMsgs(e).some((m) => /nothing else runs here until you send another message/.test(m.text)));
 
     e.send(R(e), '@codex still alive?');
     await idle(e);
@@ -316,7 +316,7 @@ const alive = (pid) => {
     const e = mk({}, (cfg) => (cfg.agents.codex.command = 'definitely-not-a-real-cli-xyz'));
     e.send(R(e), '@codex hi');
     await idle(e);
-    check('missing CLI explained', sysMsgs(e).some((m) => m.kind === 'error' && /Couldn't start/.test(m.text)), sysMsgs(e));
+    check('missing CLI explained', sysMsgs(e).some((m) => m.kind === 'error' && /couldn't start/.test(m.text)), sysMsgs(e));
 
     const e2 = mk();
     e2.send(R(e2), '@grok BADEXIT');
@@ -445,7 +445,7 @@ const alive = (pid) => {
     await idle(e, 8000);
     check('stopping room A killed A', !alive(pidA));
     check('room B still got its reply', order(e, b) === 'codex', order(e, b));
-    check('A has the stopped note, B does not', sysMsgs(e, a).some((m) => /Stopped/.test(m.text)) && !sysMsgs(e, b).some((m) => /Stopped/.test(m.text)));
+    check('A has the stopped note, B does not', sysMsgs(e, a).some((m) => /nothing else runs here until you send another message/.test(m.text)) && !sysMsgs(e, b).some((m) => /nothing else runs here until you send another message/.test(m.text)));
 
     e.send(a, '@claude SLEEP again');
     await sleep(500);
@@ -512,7 +512,7 @@ const alive = (pid) => {
     const e2 = mk({}, (cfg) => ['claude', 'codex', 'grok'].forEach((i) => (cfg.agents[i].enabled = false)));
     e2.send(R(e2), 'anyone?');
     await idle(e2);
-    check('all off gives a clear message', sysMsgs(e2).some((m) => /Nobody in general is switched on/.test(m.text)));
+    check('all off gives a clear message', sysMsgs(e2).some((m) => /nobody in general is switched on/.test(m.text)));
 
     const e3 = mk();
     e3.updateConfig({ settings: { maxAutoRuns: 9999, timeoutSec: -5, contextMessages: 'abc', userName: '  ' } });
@@ -681,13 +681,13 @@ const alive = (pid) => {
     check('fenced file content saved', fs.readFileSync(path.join(wd, 'huddle-files', 'notes.md'), 'utf8') === '# Notes\nhi');
     check('file markers and fences are stripped from the text', !/```|\[\[file/.test(reply.text) && /here you go/.test(reply.text));
     check('a file outside the room folder is refused, not attached', /outside this room's folder/.test(reply.text) && !names.includes('outside'));
-    check('a missing file is reported', /nope.txt: file not found/.test(reply.text));
+    check('a missing file is reported', /I couldn't attach nope.txt/.test(reply.text) && /couldn't find that file/.test(reply.text));
     check('agent files are openable from the UI', e.isKnownFile(reply.attachments[0].path));
 
     e.flush();
     const e2 = new Engine(e.dir);
     check('attachments survive a restart and stay openable', e2.isKnownFile(path.join(wd, 'huddle-files', 'cat.png')) && e2.rooms[0].transcript.some((x) => x.attachments));
-    check('export lists attachments', /Attachment: cat.png/.test(e2.exportMarkdown(e2.rooms[0].id)));
+    check('export lists attachments', /attachment: cat.png/.test(e2.exportMarkdown(e2.rooms[0].id)));
   }
 
   console.log('context trimming');

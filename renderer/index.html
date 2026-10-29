@@ -15,18 +15,18 @@
     <div class="bar" aria-hidden="true"></div>
 
     <div class="app">
-      <aside class="side" aria-label="Rooms">
+      <aside class="side" aria-label="rooms">
         <div class="brand">
           <svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><polygon points="12.00,2.00 13.05,10.18 20.66,7.00 14.10,12.00 20.66,17.00 13.05,13.82 12.00,22.00 10.95,13.82 3.34,17.00 9.90,12.00 3.34,7.00 10.95,10.18" fill="#ceff00" stroke="#ceff00" stroke-width="0.7" stroke-linejoin="round"/></svg>
           <div class="brand-text">
             <h1>AI Huddle</h1>
-            <a class="by" href="https://alliefern.com" target="_blank" rel="noopener">Brought to you by Allie Fern</a>
+            <a class="by" href="https://alliefern.com" target="_blank" rel="noopener">brought to you by Allie Fern</a>
           </div>
         </div>
 
         <div class="side-head">
-          <span class="side-label">Rooms</span>
-          <button id="add-room" class="icon-btn" title="New room" aria-label="New room">+</button>
+          <span class="side-label">rooms</span>
+          <button id="add-room" class="icon-btn" title="new room" aria-label="new room">+</button>
         </div>
         <nav class="rooms" id="rooms"></nav>
 
@@ -34,8 +34,8 @@
           <div class="update-bar" id="update-bar" hidden></div>
           <div class="who-list" id="who-list" aria-label="Agents"></div>
           <div class="side-btns">
-            <button id="skills-btn" class="side-btn">Skills</button>
-            <button id="settings" class="side-btn">Settings</button>
+            <button id="skills-btn" class="side-btn">skills</button>
+            <button id="settings" class="side-btn">settings</button>
           </div>
         </div>
       </aside>
@@ -47,15 +47,15 @@
             <p id="room-topic" class="topic"></p>
           </div>
           <div class="room-actions">
-            <label class="switch" title="When on, agents can @mention each other and keep the conversation going (up to the limit in Settings).">
+            <label class="switch" title="when this is on, agents can @mention each other and keep going, up to the limit in settings.">
               <input type="checkbox" id="auto" />
               <span class="track"><span class="thumb"></span></span>
-              <span class="switch-label">Let them tag each other</span>
+              <span class="switch-label">let them tag each other</span>
             </label>
-            <button id="stop" class="btn danger" hidden>Stop</button>
-            <button id="room-settings" class="btn ghost" title="Rename, set the topic, pick who is in this room">Room</button>
-            <button id="export" class="btn ghost" title="Save this room as Markdown">Export</button>
-            <button id="clear" class="btn ghost" title="Wipe this room's history">Clear</button>
+            <button id="stop" class="btn danger" hidden>stop</button>
+            <button id="room-settings" class="btn ghost" title="rename this room, set the topic, or choose who's in it">room</button>
+            <button id="export" class="btn ghost" title="save this room as Markdown">export</button>
+            <button id="clear" class="btn ghost" title="wipe this room's history">clear</button>
           </div>
         </header>
 
@@ -68,10 +68,10 @@
           <div class="slash" id="slash" hidden role="listbox"></div>
           <div class="pending" id="pending" hidden></div>
           <div class="compose-row">
-            <button id="attach" class="icon-btn dark" title="Attach files (you can also paste images or drag files in)" aria-label="Attach files">+</button>
+            <button id="attach" class="icon-btn dark" title="attach files. you can also paste images or drag files in." aria-label="attach files">+</button>
             <input type="file" id="file-input" multiple hidden />
-            <textarea id="input" rows="1" placeholder="Message the room"></textarea>
-            <button id="send" class="btn primary">Send</button>
+            <textarea id="input" rows="1" placeholder="message the room"></textarea>
+            <button id="send" class="btn primary">send</button>
           </div>
         </footer>
       </section>
@@ -80,8 +80,8 @@
     <div class="modal" id="modal" hidden>
       <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
         <div class="sheet-head">
-          <h2 id="sheet-title">Settings</h2>
-          <button id="modal-close" class="btn ghost" aria-label="Close">Close</button>
+          <h2 id="sheet-title">settings</h2>
+          <button id="modal-close" class="btn ghost" aria-label="close">close</button>
         </div>
         <div class="sheet-body" id="sheet-body"></div>
         <div class="sheet-foot" id="sheet-foot"></div>
