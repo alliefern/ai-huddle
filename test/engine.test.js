@@ -3,7 +3,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { Engine, stripAnsi, winQuote, resolveCommand } = require('../engine');
+const { Engine, stripAnsi, winQuote, resolveCommand, parseRepoUrl, MEMORY_MAX_CHARS } = require('../engine');
 
 const FAKE = path.join(__dirname, 'fake-agent.js');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -43,6 +43,20 @@ function mk(extra, mutate) {
 }
 
 const idleNow = (e) => e.running.size === 0 && Object.values(e.queues).every((q) => !q.length);
+// send to one agent and wait until that agent's new reply has actually landed
+async function ask(e, text, who) {
+  const count = () => e.rooms[0].transcript.filter((m) => m.from === who).length;
+  const n = count();
+  e.send(e.rooms[0].id, text);
+  const t0 = Date.now();
+  while (count() === n) {
+    if (Date.now() - t0 > 15000) throw new Error('no reply from ' + who);
+    await sleep(25);
+  }
+  await idle(e);
+  return e.rooms[0].transcript.filter((m) => m.from === who).pop().text;
+}
+
 async function idle(e, timeout = 15000) {
   const t0 = Date.now();
   await sleep(60);
@@ -247,6 +261,81 @@ const alive = (pid) => {
     check('update setting defaults on', e.config.settings.checkUpdates === true);
     e.updateConfig({ settings: { checkUpdates: false } });
     check('update setting can be turned off', e.config.settings.checkUpdates === false);
+  }
+
+  console.log('shared memory');
+  {
+    const e = mk({});
+    const out_60 = await ask(e, '@claude SHOWPROMPT', 'claude');
+    check('no memory block when memory is empty', !/shared memory/.test(e.rooms[0].transcript.find((m) => m.from === 'claude').text));
+    e.setMemory('I run House of Fern. Brand rule: no hashtags.');
+    const out_320 = await ask(e, '@claude SHOWPROMPT', 'claude');
+    const shown = e.rooms[0].transcript.filter((m) => m.from === 'claude').pop().text;
+    check('memory goes into the prompt', /House of Fern/.test(shown) && /shared memory/.test(shown));
+    check('it goes in before the conversation', shown.indexOf('House of Fern') < shown.indexOf('--- Conversation so far ---'));
+    const big = e.setMemory('x'.repeat(MEMORY_MAX_CHARS + 500));
+    check('memory is capped and says so', big.text.length === MEMORY_MAX_CHARS && big.trimmed === true);
+    e.setMemory('persist me');
+    const e2 = new Engine(e.dir, {});
+    check('memory survives a restart', e2.getMemory() === 'persist me');
+    e.setMemory('y'.repeat(20000));
+    const small = e._buildPrompt(e.rooms[0], 'claude', 16000);
+    check('memory shrinks to fit arg-mode prompts', small.length < 16000);
+  }
+
+  console.log('build mode');
+  {
+    const cfgA = (cfg) => {
+      cfg.agents.claude.accessArgs = { edit: ['--E'], run: ['--E', '--R'] };
+      cfg.agents.codex.accessArgs = { edit: ['--sandbox', 'workspace-write'] };
+      cfg.agents.grok.accessArgs = { run: ['--auto'] };
+    };
+    const e = mk({}, cfgA);
+    const room = e.rooms[0];
+    check('rooms start chat-only', room.access === 'chat' && room.builder === '');
+    const out_1608 = await ask(e, '@claude SHOWARGS', 'claude');
+    check('chat-only adds no flags', !/--E/.test(e.rooms[0].transcript.filter((m) => m.from === 'claude').pop().text));
+    e.updateRoom(R(e), { access: 'edit', builder: 'claude' });
+    const out_1848 = await ask(e, '@claude SHOWARGS', 'claude');
+    check('the builder gets the edit flags', /ARGS:.*--E/.test(e.rooms[0].transcript.filter((m) => m.from === 'claude').pop().text));
+    const out_2039 = await ask(e, '@codex SHOWARGS', 'codex');
+    check('everyone else stays chat-only', !/--sandbox/.test(e.rooms[0].transcript.filter((m) => m.from === 'codex').pop().text));
+    e.updateRoom(R(e), { access: 'run' });
+    const out_2269 = await ask(e, '@claude SHOWARGS', 'claude');
+    check('run level adds the run flags', /--R/.test(e.rooms[0].transcript.filter((m) => m.from === 'claude').pop().text));
+    const out_2450 = await ask(e, '@claude SHOWPROMPT', 'claude');
+    const pr = e.rooms[0].transcript.filter((m) => m.from === 'claude').pop().text;
+    check('builder prompt says so and sets branch rules', /You are the builder/.test(pr) && /git branch/.test(pr) && !e._accessRules(e.rooms[0], 'claude').some((l) => /This is a chat/.test(l)));
+    const out_2788 = await ask(e, '@codex SHOWPROMPT', 'codex');
+    check('others are told who builds', /is the builder in this room/.test(e.rooms[0].transcript.filter((m) => m.from === 'codex').pop().text));
+    e.updateRoom(R(e), { builder: 'codex', access: 'run' });
+    const out_3052 = await ask(e, '@codex SHOWARGS', 'codex');
+    check('an agent without that level falls back to chat and explains', !/--sandbox/.test(e.rooms[0].transcript.filter((m) => m.from === 'codex').pop().text) && sysMsgs(e).some((m) => /chatting only/.test(m.text)));
+    e.updateRoom(R(e), { builder: 'nobody', access: 'weird' });
+    check('bad builder/level are ignored', e.rooms[0].builder === '' && e.rooms[0].access === 'run');
+    const e3 = new Engine(e.dir, {});
+    e.flush();
+    const e4 = new Engine(e.dir, {});
+    check('build settings survive a restart', e4.rooms[0].access === 'run');
+  }
+
+  console.log('cloning');
+  {
+    check('owner/repo means GitHub', parseRepoUrl('alliefern/ai-huddle').url === 'https://github.com/alliefern/ai-huddle.git');
+    check('https links work', parseRepoUrl('https://github.com/a/b.git').name === 'b' && parseRepoUrl('https://github.com/a/b').name === 'b');
+    check('git@ links work', parseRepoUrl('git@github.com:a/b.git').name === 'b');
+    check('options, spaces and local paths are refused', !parseRepoUrl('--upload-pack=evil') && !parseRepoUrl('a b') && !parseRepoUrl('/etc/passwd') && !parseRepoUrl('file:///tmp/x') && !parseRepoUrl('ext::sh -c id') && !parseRepoUrl('http://github.com/a/b'));
+    const { execFileSync } = require('child_process');
+    const e = new Engine(fs.mkdtempSync(path.join(os.tmpdir(), 'huddle-clone-')), { config: fakeConfig(), allowAnyRepoUrl: true });
+    const src = fs.mkdtempSync(path.join(os.tmpdir(), 'huddle-src-'));
+    execFileSync('git', ['init', '-q', src]);
+    fs.writeFileSync(path.join(src, 'a.txt'), 'hi');
+    execFileSync('git', ['-C', src, '-c', 'user.name=t', '-c', 'user.email=t@t', 'add', '.']);
+    execFileSync('git', ['-C', src, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'x']);
+    const r = await e.cloneRepo(e.rooms[0].id, src);
+    check('clone works and points the room at it', r.ok && fs.existsSync(path.join(r.path, 'a.txt')) && e.rooms[0].workDir === r.path, r);
+    const bad = await new Engine(fs.mkdtempSync(path.join(os.tmpdir(), 'huddle-clone-')), { config: fakeConfig() }).cloneRepo('r1', '--evil');
+    check('a bad link is refused with a plain message', !!bad.error && /https link/.test(bad.error));
   }
 
   console.log('export');

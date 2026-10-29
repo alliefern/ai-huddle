@@ -1109,12 +1109,17 @@ body {
 }
 
 .side-btns {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
   gap: 8px;
 }
 
+.side-btns #settings {
+  grid-column: 1 / -1;
+}
+
 .side-btns .side-btn {
-  flex: 1;
+  min-width: 0;
   padding: 9px 8px;
 }
 
@@ -1847,3 +1852,28 @@ body {
   font-weight: 800;
 }
 .update-bar[hidden] { display: none; }
+
+/* memory + build mode */
+.memory-text {
+  width: 100%;
+  min-height: 220px;
+  resize: vertical;
+}
+
+.memory-prompt {
+  width: 100%;
+  min-height: 120px;
+  resize: vertical;
+  margin: 8px 0;
+}
+
+.build-tag {
+  margin: 4px 0 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.build-warn {
+  margin-top: 8px;
+}

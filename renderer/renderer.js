@@ -521,6 +521,15 @@
     const topic = $('#room-topic');
     topic.textContent = (r.archived ? 'archived. send a message to bring it back. ' : '') + (r.topic || (r.archived ? '' : 'no topic yet. click room to say what this one is for.'));
     topic.title = r.topic || '';
+    const bt = $('#build-tag');
+    const bAgent = r.builder && state.config.agents[r.builder];
+    if (bt) {
+      bt.hidden = !(bAgent && r.access && r.access !== 'chat');
+      if (!bt.hidden) {
+        bt.textContent = `${bAgent.label} is building here (${r.access === 'run' ? 'edits files + runs commands' : 'edits files'})`;
+        bt.title = 'only this agent can change files in this room. change it in room settings.';
+      }
+    }
     input.placeholder = `message ${r.name}. Enter sends, Shift+Enter adds a line.`;
     document.title = `${r.name} · AI Huddle`;
   }
@@ -1028,6 +1037,92 @@
   }
 
   $('#skills-btn').addEventListener('click', openSkillsSheet);
+  $('#memory-btn').addEventListener('click', openMemorySheet);
+
+  const MEMORY_PROMPT =
+    "I'm putting together a shared memory file so every AI I use starts out knowing me. Please write ONE markdown file about me, based only on what you actually know from our chats, and mark anything you're guessing. Use these sections: who I am (work, audience, what I sell); how I work and what I like (tools, pace, how I make decisions); my voice and tone, with a few examples of how I write; brand rules (colors, fonts, words I love or never use, what I never do); ongoing projects; and what you should always do or never do when helping me. Keep it under 1,500 words. Leave out passwords, API keys, financial account numbers and anything about my health or other people's private lives. I'll read it before I share it.";
+
+  async function openMemorySheet() {
+    const cur = await api.getMemory();
+    const refs = {};
+    openSheet(
+      'shared memory',
+      (body) => {
+        const g = document.createElement('div');
+        g.className = 'group';
+        g.innerHTML = '<h3>who I am, how I work, brand rules</h3>';
+        const intro = document.createElement('p');
+        intro.className = 'hint';
+        intro.textContent =
+          "this goes to every agent, in every room, on every message. so it uses part of each one's plan, and shorter is better. it stays on this computer in a plain text file, and it only leaves when it's sent to Claude, Codex or Grok as part of a message.";
+        refs.text = document.createElement('textarea');
+        refs.text.className = 'memory-text';
+        refs.text.value = cur.text || '';
+        refs.text.placeholder = 'e.g. I run a design studio. my voice is direct and a little sarcastic. never use hashtags. ...';
+        refs.count = document.createElement('p');
+        refs.count.className = 'hint';
+        const upd = () => {
+          const n = refs.text.value.length;
+          refs.count.textContent = `${n.toLocaleString()} of ${cur.max.toLocaleString()} characters` + (n > cur.max ? '. the end gets cut off when you save.' : '.');
+        };
+        refs.text.addEventListener('input', upd);
+        upd();
+
+        const bar = document.createElement('div');
+        bar.className = 'row';
+        const add = document.createElement('button');
+        add.className = 'btn small';
+        add.textContent = 'add from file...';
+        add.addEventListener('click', async () => {
+          const res = await api.importMemoryFile();
+          if (!res) return;
+          refs.text.value = res.text;
+          upd();
+          toast(res.added.length ? 'added ' + res.added.join(', ') : 'nothing to add in those files');
+        });
+        bar.append(add);
+
+        const gp = document.createElement('div');
+        gp.className = 'group';
+        gp.innerHTML = '<h3>get it from your other AIs</h3>';
+        const gh = document.createElement('p');
+        gh.className = 'hint';
+        gh.textContent =
+          'ask Claude, ChatGPT and Grok the same thing, save each answer as a .md or .txt file, then use "add from file" to stack them here. then read it, trim the repeats, and cut anything you don\'t want every agent to see.';
+        const pr = document.createElement('textarea');
+        pr.readOnly = true;
+        pr.value = MEMORY_PROMPT;
+        pr.className = 'memory-prompt';
+        const cp = document.createElement('button');
+        cp.className = 'btn small';
+        cp.textContent = 'copy the prompt';
+        cp.addEventListener('click', async () => {
+          try {
+            await navigator.clipboard.writeText(MEMORY_PROMPT);
+          } catch (_) {
+            pr.select();
+            document.execCommand('copy');
+          }
+          toast('copied');
+        });
+        gp.append(gh, pr, cp);
+        g.append(intro, refs.text, refs.count, bar);
+        body.append(g, gp);
+      },
+      [
+        'spacer',
+        {
+          label: 'save',
+          kind: 'primary',
+          onClick: async () => {
+            const res = await api.setMemory(refs.text.value);
+            closeSheet();
+            toast(res && res.trimmed ? 'saved, but it was too long so I cut the end off' : 'saved');
+          },
+        },
+      ]
+    );
+  }
 
   // ---------- room sheet (create / edit) ----------
 
@@ -1123,6 +1218,110 @@
           "you can tag agents who are in the room, and those agents get that room's messages. pinned skills go to every agent on every message in this room. if you leave the folder empty, I'll use the default shown. files you attach get saved in a huddle-files folder inside it.";
         g.append(hint);
         body.append(g);
+
+        const bg = document.createElement('div');
+        bg.className = 'group';
+        bg.innerHTML = '<h3>building</h3>';
+        const bgrid = document.createElement('div');
+        bgrid.className = 'grid';
+        refs.access = document.createElement('select');
+        [
+          ['chat', 'chat only (nobody changes files)'],
+          ['edit', 'edit files'],
+          ['run', 'edit files and run commands'],
+        ].forEach(([v, t]) => {
+          const o = document.createElement('option');
+          o.value = v;
+          o.textContent = t;
+          refs.access.append(o);
+        });
+        refs.access.value = editing && room.access ? room.access : 'chat';
+        refs.builder = document.createElement('select');
+        const none = document.createElement('option');
+        none.value = '';
+        none.textContent = 'nobody';
+        refs.builder.append(none);
+        allIds.forEach((id) => {
+          const o = document.createElement('option');
+          o.value = id;
+          o.textContent = state.config.agents[id].label;
+          refs.builder.append(o);
+        });
+        refs.builder.value = editing && room.builder ? room.builder : '';
+        const buildWarn = document.createElement('p');
+        buildWarn.className = 'hint build-warn';
+        const supports = (id, lvl) => {
+          const aa = (state.config.agents[id] || {}).accessArgs || {};
+          return Array.isArray(aa[lvl]) && aa[lvl].length > 0;
+        };
+        const refreshBuildWarn = () => {
+          const lvl = refs.access.value;
+          const who = refs.builder.value;
+          let msg = '';
+          if (lvl === 'chat' || !who) {
+            msg = 'right now this room is chat only. pick a level and a builder to let one agent work on files here. everyone else stays chat only.';
+          } else if (!supports(who, lvl)) {
+            msg = `${state.config.agents[who].label} has no "${lvl === 'edit' ? 'edit files' : 'edit and run'}" setting, so it would only chat. pick another level, another builder, or add flags in settings.`;
+          } else {
+            msg =
+              (lvl === 'run'
+                ? `${state.config.agents[who].label} can edit files and run commands (git, builds, tests) on your computer, inside the folder above. `
+                : `${state.config.agents[who].label} can edit files inside the folder above, but not run commands. `) +
+              "it's told to work on a git branch, not main, and not to push unless you ask. only use this on a repo you can roll back, and keep an eye on what it does.";
+          }
+          buildWarn.textContent = msg;
+        };
+        refs.access.addEventListener('change', refreshBuildWarn);
+        refs.builder.addEventListener('change', refreshBuildWarn);
+        refreshBuildWarn();
+        bgrid.append(...field('access level', refs.access), ...field('who builds', refs.builder));
+        bg.append(bgrid, buildWarn);
+
+        if (editing) {
+          const cr = document.createElement('div');
+          cr.className = 'row';
+          refs.repo = textInput('', { placeholder: 'owner/repo or https://github.com/owner/repo' });
+          const cb = document.createElement('button');
+          cb.className = 'btn small';
+          cb.textContent = 'clone';
+          const status = document.createElement('p');
+          status.className = 'hint';
+          cb.addEventListener('click', async () => {
+            const v = refs.repo.value.trim();
+            if (!v) return;
+            cb.disabled = true;
+            status.textContent = 'cloning. this can take a minute for a big repo...';
+            try {
+              const res = await api.cloneRepo(room.id, v);
+              if (res && res.ok) {
+                refs.workDir.value = res.path;
+                status.textContent = 'cloned into ' + res.path + ' and this room now works there.';
+                refs.repo.value = '';
+              } else {
+                status.textContent = (res && res.error) || "I couldn't clone that.";
+              }
+            } catch (e) {
+              status.textContent = "I couldn't clone that: " + e.message;
+            }
+            cb.disabled = false;
+          });
+          cr.append(refs.repo, cb);
+          const cgrid = document.createElement('div');
+          cgrid.className = 'grid';
+          cgrid.append(...field('clone a repo', cr));
+          bg.append(cgrid, status);
+          const ch = document.createElement('p');
+          ch.className = 'hint';
+          ch.textContent =
+            "cloning uses git on this computer and whatever GitHub login git already has, so private repos work if git can already reach them. I never see or store a token. repos land in a repos folder inside your default work folder.";
+          bg.append(ch);
+        } else {
+          const ch = document.createElement('p');
+          ch.className = 'hint';
+          ch.textContent = 'save the room first, then open room settings again to clone a repo into it.';
+          bg.append(ch);
+        }
+        body.append(bg);
       },
       [
         ...(editing
@@ -1163,6 +1362,8 @@
               workDir: refs.workDir.value.trim(),
               agents: allIds.filter((id) => refs.members[id].checked),
               skills: Object.keys(refs.pins).filter((s) => refs.pins[s].checked),
+              access: refs.access.value,
+              builder: refs.builder.value,
             };
             if (editing) {
               await api.updateRoom(room.id, payload);
@@ -1348,6 +1549,8 @@
           sel.value = a.input;
           r.input = sel;
           r.budget = numInput(a.dailyBudget == null ? 50 : a.dailyBudget, 0, 1000);
+          r.editArgs = textInput(((a.accessArgs || {}).edit || []).join(' '));
+          r.runArgs = textInput(((a.accessArgs || {}).run || []).join(' '));
 
           const gr = document.createElement('div');
           gr.className = 'grid';
@@ -1356,9 +1559,16 @@
             ...field('command', r.command),
             ...field('arguments', r.args),
             ...field('prompt goes in via', sel),
-            ...field('daily budget (runs, 0 = no bar)', r.budget)
+            ...field('daily budget (runs, 0 = no bar)', r.budget),
+            ...field('flags when building: edit files', r.editArgs),
+            ...field('flags when building: edit + run', r.runArgs)
           );
           box.append(gr);
+          const bh = document.createElement('p');
+          bh.className = 'hint';
+          bh.textContent =
+            "these flags are only added when this agent is a room's builder. leave one blank if the CLI has no safe version of it, and that level just won't be offered. check them against your CLI's own --help, because they change between versions.";
+          box.append(bh);
 
           const pe = document.createElement('p');
           pe.className = 'found-path';
@@ -1419,6 +1629,10 @@
                 args: r.args.value.split(/\s+/).filter(Boolean),
                 input: r.input.value,
                 dailyBudget: Number(r.budget.value),
+                accessArgs: {
+                  edit: r.editArgs.value.split(/\s+/).filter(Boolean),
+                  run: r.runArgs.value.split(/\s+/).filter(Boolean),
+                },
               };
             });
             await api.saveConfig(patch);

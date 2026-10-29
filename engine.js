@@ -51,6 +51,8 @@ const DEFAULTS = {
       command: 'claude',
       args: ['-p'],
       input: 'stdin',
+      // edit: file edits are applied automatically. run: also any shell command (git, npm, builds...).
+      accessArgs: { edit: ['--permission-mode', 'acceptEdits'], run: ['--permission-mode', 'acceptEdits', '--allowedTools', 'Bash'] },
     },
     codex: {
       label: 'Codexa',
@@ -61,6 +63,8 @@ const DEFAULTS = {
       // Codex refuses to run outside a git repo unless told otherwise, and Huddle's workspace isn't one.
       args: ['exec', '--skip-git-repo-check', '-'],
       input: 'stdin',
+      // Codex's own sandbox: it can write inside the folder and run commands there, but usually has no network.
+      accessArgs: { edit: ['--sandbox', 'workspace-write'], run: ['--sandbox', 'workspace-write'] },
     },
     grok: {
       // Per xAI's docs, headless mode is `grok -p "<prompt>"`.
@@ -71,6 +75,8 @@ const DEFAULTS = {
       command: 'grok',
       args: ['--no-auto-update', '-p', '{prompt}'],
       input: 'arg',
+      // Grok has no documented "edit only" setting. Its build mode auto-approves every tool call, so it only offers 'run'.
+      accessArgs: { run: ['--always-approve'] },
     },
   },
 };
@@ -81,6 +87,11 @@ const TEAMS = {
   girls: { claude: 'Claudette', codex: 'Codexa', grok: 'Grokette' },
   boys: { claude: 'Claude', codex: 'Codex', grok: 'Grok' },
 };
+
+// Build mode: what an agent may do in a room's folder. 'chat' adds nothing. Which flags turn each level on is
+// per agent (agents.<id>.accessArgs), shown and editable in Settings. A missing level means that agent can't do it.
+const ACCESS_LEVELS = ['chat', 'edit', 'run'];
+const MEMORY_MAX_CHARS = 30000;
 
 const INPUT_MODES = ['stdin', 'file', 'arg'];
 
@@ -179,6 +190,20 @@ async function resolveCommand(cmd) {
   return null;
 }
 
+// Accepts https://host/owner/repo(.git), git@host:owner/repo(.git), or owner/repo (meaning GitHub). Nothing else, so a
+// pasted string can never turn into a git option or a local path.
+function parseRepoUrl(input) {
+  let s = String(input || '').trim();
+  if (!s || /\s/.test(s) || s.startsWith('-')) return null;
+  let m = s.match(/^([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/);
+  if (m && !/^https?:/.test(s)) return { url: `https://github.com/${m[1]}/${m[2]}.git`, name: m[2] };
+  m = s.match(/^https:\/\/([\w.-]+)\/([\w.-]+(?:\/[\w.-]+)*?)\/([\w.-]+?)(?:\.git)?\/?$/);
+  if (m) return { url: s, name: m[3] };
+  m = s.match(/^git@([\w.-]+):([\w.-]+(?:\/[\w.-]+)*?)\/([\w.-]+?)(?:\.git)?$/);
+  if (m) return { url: s, name: m[3] };
+  return null;
+}
+
 class Engine extends EventEmitter {
   constructor(storeDir, opts = {}) {
     super();
@@ -197,7 +222,9 @@ class Engine extends EventEmitter {
     this.lastResponder = new Map(); // roomId -> agentId
     this._saveTimer = null;
     this.files = new Set(); // absolute paths of every attachment Huddle knows about (the UI may only open these)
+    this.memoryFile = path.join(storeDir, 'memory.md');
     this.usage = { day: '', counts: {} }; // runs started from AI Huddle today, per agent
+    this.opts = opts;
     this.skills = new SkillStore(opts.skillsDir || path.join(storeDir, 'skills'));
 
     this._load();
@@ -267,6 +294,8 @@ class Engine extends EventEmitter {
       agents,
       workDir: String(r.workDir || ''),
       skills: Array.isArray(r.skills) ? r.skills.map(String).slice(0, 40) : [],
+      access: ACCESS_LEVELS.includes(r.access) ? r.access : 'chat',
+      builder: ids.includes(r.builder) ? r.builder : '',
       archived: !!r.archived,
       created: r.created || Date.now(),
       transcript: Array.isArray(r.transcript) ? r.transcript.slice(-MAX_STORED_MESSAGES) : [],
@@ -360,6 +389,17 @@ class Engine extends EventEmitter {
         if (typeof p.command === 'string' && p.command.trim()) a.command = p.command.trim();
         if (Array.isArray(p.args)) a.args = p.args.map(String).filter((x) => x.length);
         if (INPUT_MODES.includes(p.input)) a.input = p.input;
+        if (p.accessArgs && typeof p.accessArgs === 'object') {
+          const next = {};
+          for (const lvl of ['edit', 'run']) {
+            const v = p.accessArgs[lvl];
+            if (Array.isArray(v)) {
+              const clean = v.map(String).filter((x) => x.length);
+              if (clean.length) next[lvl] = clean;
+            }
+          }
+          a.accessArgs = next;
+        }
         if ('dailyBudget' in p) {
           const n = Number(p.dailyBudget);
           if (Number.isFinite(n)) {
@@ -415,6 +455,8 @@ class Engine extends EventEmitter {
       agents: r.agents.slice(),
       workDir: r.workDir,
       skills: (r.skills || []).slice(),
+      access: r.access || 'chat',
+      builder: r.builder || '',
       archived: !!r.archived,
       lastId: last ? last.id : 0,
       count: r.transcript.length,
@@ -434,6 +476,8 @@ class Engine extends EventEmitter {
       agents: Array.isArray(p.agents) ? p.agents.filter((id) => ids.includes(id)) : ids.slice(),
       workDir: String(p.workDir || '').trim(),
       skills: Array.isArray(p.skills) ? p.skills.map(String).slice(0, 40) : [],
+      access: ACCESS_LEVELS.includes(p.access) ? p.access : 'chat',
+      builder: ids.includes(p.builder) ? p.builder : '',
       archived: false,
       created: Date.now(),
       transcript: [],
@@ -458,6 +502,8 @@ class Engine extends EventEmitter {
     if ('workDir' in p) room.workDir = String(p.workDir || '').trim();
     if (Array.isArray(p.agents)) room.agents = p.agents.filter((a) => ids.includes(a));
     if (Array.isArray(p.skills)) room.skills = p.skills.map(String).slice(0, 40);
+    if ('access' in p && ACCESS_LEVELS.includes(p.access)) room.access = p.access;
+    if ('builder' in p) room.builder = ids.includes(p.builder) ? p.builder : '';
     if ('archived' in p) {
       const want = !!p.archived;
       if (want && !room.archived) {
@@ -475,6 +521,42 @@ class Engine extends EventEmitter {
 
   _activeCount() {
     return this.rooms.filter((r) => !r.archived).length;
+  }
+
+  // Clone a repo with the user's own git login (same as a terminal would) into the room's area, then point the room at it.
+  cloneRepo(roomId, input) {
+    const room = this._room(roomId);
+    const parsed = parseRepoUrl(input);
+    if (!room) return Promise.resolve({ error: 'That room is gone.' });
+    if (!parsed && !(this.opts && this.opts.allowAnyRepoUrl)) {
+      return Promise.resolve({ error: 'Use an https link like https://github.com/you/repo, a git@ link, or just you/repo.' });
+    }
+    const info = parsed || { url: String(input).trim(), name: path.basename(String(input).trim()).replace(/\.git$/, '') || 'repo' };
+    const base = path.join(this.config.settings.workDir || path.join(this.storeDir, 'workspace'), 'repos');
+    let dest = path.join(base, info.name);
+    for (let i = 2; fs.existsSync(dest); i++) dest = path.join(base, `${info.name}-${i}`);
+    try {
+      fs.mkdirSync(base, { recursive: true });
+    } catch (e) {
+      return Promise.resolve({ error: "I couldn't make the folder for it: " + e.message });
+    }
+    return new Promise((resolve) => {
+      execFile(
+        'git',
+        ['clone', '--', info.url, dest],
+        { windowsHide: true, timeout: 10 * 60 * 1000, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } },
+        (err, _out, stderr) => {
+          if (err) {
+            const why = err.code === 'ENOENT' ? 'Git isn\'t installed (or isn\'t on your PATH).' : String(stderr || err.message).trim().split('\n').slice(-3).join(' ');
+            return resolve({ error: "I couldn't clone it: " + why });
+          }
+          room.workDir = dest;
+          this._scheduleSave();
+          this._emitRooms();
+          resolve({ ok: true, path: dest, name: info.name });
+        }
+      );
+    });
   }
 
   deleteRoom(id) {
@@ -883,6 +965,10 @@ class Engine extends EventEmitter {
     const myEpoch = task.epoch;
     const agent = this.config.agents[task.agent];
     const entry = { child: null, room: task.room, agent: task.agent };
+    const accNote = this._accessFor(room, task.agent);
+    if (accNote.unsupported) {
+      this._note(room, `${agent.label} has no "${accNote.wanted === 'edit' ? 'edit files' : 'edit and run'}" setting, so it's chatting only this time. Pick another builder or another level in Room settings.`, 'error');
+    }
     this.running.set(key, entry);
     this._bumpUsage(task.agent);
     this._emitStatus();
@@ -991,6 +1077,57 @@ class Engine extends EventEmitter {
     for (const id of toRun) this._enqueue(room, id, task.round);
   }
 
+  _accessRules(room, agentId) {
+    const S = this.config.settings;
+    const acc = this._accessFor(room, agentId);
+    const wd = this.workDir(room.id);
+    const builder = room.builder && this.config.agents[room.builder];
+    if (acc.level === 'chat') {
+      const rules = [`- This is a chat. Don't edit files or run commands unless ${S.userName} explicitly asked you to.`];
+      if (builder && room.access !== 'chat' && room.builder !== agentId) {
+        rules.push(`- ${builder.label} (@${room.builder}) is the builder in this room. Leave changes to files to them. You can read, review and advise.`);
+      }
+      return rules;
+    }
+    const can = acc.level === 'run' ? 'edit files and run commands (git, builds, tests)' : 'edit files (but not run shell commands)';
+    return [
+      `- You are the builder in this room. You may ${can} in your working folder: ${wd}. Stay inside that folder.`,
+      `- Work on a git branch, never directly on main/master. Don't force-push, delete branches, or delete files ${S.userName} didn't ask you to remove. Don't push unless ${S.userName} asks.`,
+      `- Tell ${S.userName} what you changed and where. The other agents can't see your files unless you describe them.`,
+    ];
+  }
+
+  _memoryBlock(budget) {
+    const raw = this.getMemory().trim();
+    if (!raw) return '';
+    let text = raw;
+    if (text.length > budget) text = text.slice(0, budget) + '\n…[memory truncated to fit]';
+    return [
+      '',
+      `--- About ${this.config.settings.userName} (their shared memory: background you can rely on, not something to recite back) ---`,
+      text,
+      '--- End of memory ---',
+    ].join('\n');
+  }
+
+  getMemory() {
+    try {
+      return fs.readFileSync(this.memoryFile, 'utf8');
+    } catch (_) {
+      return '';
+    }
+  }
+
+  setMemory(text) {
+    const t = String(text == null ? '' : text).replace(/\r\n/g, '\n').slice(0, MEMORY_MAX_CHARS);
+    try {
+      fs.writeFileSync(this.memoryFile, t, 'utf8');
+    } catch (e) {
+      this.emit('error-note', "I couldn't save the shared memory: " + e.message);
+    }
+    return { text: t, max: MEMORY_MAX_CHARS, trimmed: String(text || '').length > MEMORY_MAX_CHARS };
+  }
+
   _buildPrompt(room, agentId, maxChars) {
     const S = this.config.settings;
     const me = this.config.agents[agentId];
@@ -1015,7 +1152,8 @@ class Engine extends EventEmitter {
     });
     const skillBudget = maxChars ? Math.floor(maxChars * 0.4) : 30000;
     const skillsText = this._skillsBlock(room, skillBudget);
-    const cap = Math.max(1500, Math.min(S.contextChars, (maxChars || Infinity) - skillsText.length - 1500));
+    const memoryText = this._memoryBlock(maxChars ? Math.floor(maxChars * 0.25) : MEMORY_MAX_CHARS);
+    const cap = Math.max(1500, Math.min(S.contextChars, (maxChars || Infinity) - skillsText.length - memoryText.length - 1500));
     let total = lines.reduce((n, l) => n + l.length + 2, 0);
     while (lines.length > 1 && total > cap) total -= lines.shift().length + 2;
 
@@ -1024,6 +1162,7 @@ class Engine extends EventEmitter {
         (others.length ? `, and: ${others.join(', ')}.` : '.'),
     ];
     if (room.topic) head.push('', `What this room is for: ${room.topic}`);
+    if (memoryText) head.push(memoryText);
     if (skillsText) head.push(skillsText);
 
     return [
@@ -1035,7 +1174,7 @@ class Engine extends EventEmitter {
         ? `- To pass the conversation to another agent, @mention them by name (for example @${firstOther}). Only do this when you genuinely need their input. Don't tag someone just to thank or agree with them.`
         : `- You're the only agent in this room right now, so there's nobody to hand off to.`,
       `- Do not prefix your reply with your own name or a transcript label. Just write the message.`,
-      `- This is a chat. Don't edit files or run commands unless ${S.userName} explicitly asked you to.`,
+      ...this._accessRules(room, agentId),
       `- Files attached to messages are saved in your working folder (shown as [Attached ...] with a path). Open them from that path if your tools can read files.`,
       `- To send ${S.userName} a file, either write a fenced block whose first line is \`\`\`file:name.ext containing the file's text, or save it in your working folder and put [[file: path]] on its own line. Huddle attaches it to your message.`,
       '',
@@ -1047,12 +1186,29 @@ class Engine extends EventEmitter {
     ].join('\n');
   }
 
+  // What this agent may do in this room: only the room's builder gets anything beyond chat, and only if the agent
+  // has flags for that level.
+  _accessFor(room, agentId) {
+    const agent = this.config.agents[agentId];
+    const level = room.access || 'chat';
+    if (level === 'chat' || room.builder !== agentId) return { level: 'chat', args: [], unsupported: false };
+    const args = (agent.accessArgs && agent.accessArgs[level]) || null;
+    if (!args || !args.length) return { level: 'chat', args: [], unsupported: true, wanted: level };
+    return { level, args: args.slice(), unsupported: false };
+  }
+
   async _exec(room, agentId, entry) {
     const agent = this.config.agents[agentId];
     const S = this.config.settings;
     const cwd = this.workDir(room.id);
 
     let args = (agent.args || []).slice();
+    const acc = this._accessFor(room, agentId);
+    if (acc.args.length) {
+      // goes after a leading subcommand (codex "exec"), otherwise first
+      const at = args.length && !String(args[0]).startsWith('-') ? 1 : 0;
+      args.splice(at, 0, ...acc.args);
+    }
     const usesFile = agent.input === 'file' || args.some((a) => a.includes('{promptFile}'));
     const usesArg = agent.input === 'arg' || args.some((a) => a.includes('{prompt}'));
     const prompt = this._buildPrompt(room, agentId, usesArg ? ARG_MODE_MAX_CHARS : undefined);
@@ -1158,4 +1314,4 @@ class Engine extends EventEmitter {
   }
 }
 
-module.exports = { Engine, DEFAULTS, TEAMS, stripAnsi, winQuote, resolveCommand };
+module.exports = { Engine, DEFAULTS, TEAMS, ACCESS_LEVELS, MEMORY_MAX_CHARS, parseRepoUrl, stripAnsi, winQuote, resolveCommand };

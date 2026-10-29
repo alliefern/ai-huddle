@@ -2,7 +2,7 @@
 const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const fs = require('fs');
 const path = require('path');
-const { Engine } = require('./engine');
+const { Engine, MEMORY_MAX_CHARS } = require('./engine');
 const { Updater } = require('./updater');
 
 let win = null;
@@ -83,6 +83,31 @@ function wireEngine() {
       .map((f) => ({ name: str(f.name), mime: str(f.mime), data: Buffer.from(f.data) }));
     engine.send(str(roomId), str(text), clean);
   });
+
+  // shared memory
+  ipcMain.handle('huddle:memory-get', () => ({ text: engine.getMemory(), max: MEMORY_MAX_CHARS }));
+  ipcMain.handle('huddle:memory-set', (_e, text) => engine.setMemory(typeof text === 'string' ? text : ''));
+  ipcMain.handle('huddle:memory-import-file', async () => {
+    const r = await dialog.showOpenDialog(win, {
+      properties: ['openFile', 'multiSelections'],
+      title: 'pick .md or .txt files to add to the shared memory',
+      filters: [{ name: 'text', extensions: ['md', 'txt', 'markdown'] }],
+    });
+    if (r.canceled) return null;
+    let text = engine.getMemory().replace(/\s+$/, '');
+    const added = [];
+    for (const p of r.filePaths.slice(0, 20)) {
+      try {
+        const body = fs.readFileSync(p, 'utf8').replace(/^\uFEFF/, '').trim();
+        if (!body) continue;
+        text += (text ? '\n\n' : '') + '## From ' + path.basename(p) + '\n\n' + body;
+        added.push(path.basename(p));
+      } catch (_) {}
+    }
+    const saved = engine.setMemory(text);
+    return { ...saved, added };
+  });
+  ipcMain.handle('huddle:clone-repo', (_e, roomId, input) => engine.cloneRepo(str(roomId), str(input)));
 
   // shared skills
   ipcMain.handle('huddle:skills', () => engine.listSkills());

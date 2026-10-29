@@ -55,6 +55,27 @@ after you install one, close AI Huddle and open it again, then use **settings â†
 - importing makes a copy. I leave your original folders alone, and I don't keep them in sync.
 - skills are plain instructions that get pasted into a prompt. if you don't trust one, skip it.
 
+## shared memory
+
+Click **memory** in the sidebar to write down who you are, how you work and your brand rules once. Every agent in every room gets it on every message, so keep it short. It's a plain text file on your computer (up to 30,000 characters), and it only leaves your machine as part of the messages sent to Claude, Codex and Grok.
+
+The memory sheet has a prompt you can copy and give to Claude, ChatGPT and Grok. Save each answer as a `.md` or `.txt` file, add them with **add from file**, then trim the repeats. Leave out passwords, keys and anything you wouldn't want all three agents to see.
+
+## build mode (let one agent work on a repo)
+
+By default every room is chat only. In **room** settings you can change two things:
+
+- **access level**: chat only, edit files, or edit files and run commands.
+- **who builds**: one agent. Only the builder gets those permissions. The other agents stay chat only and are told who's building, so they review instead of fighting over the same files.
+
+You can also **clone a repo** from the room sheet (`owner/repo` or an `https://` link). It uses git on your computer and whatever GitHub login git already has. AI Huddle never sees or stores a token. Everything is local. The repo lands in a `repos` folder inside your work folder, and the room starts working there.
+
+Things to know before you turn it on:
+
+- The builder is told to work on a git branch (not main), not to force-push or delete things, and not to push unless you ask. That's an instruction, not a lock, so use it on repos you can roll back.
+- The permission flags for each CLI are in **settings**, under each agent. I wrote them from the CLIs' docs and haven't tested them against every version, so try a throwaway repo first and check them against `--help` for your version. Leave a level blank and that level won't work for that agent.
+- Grok's only build level is full auto-approve, so it's offered as "edit files and run commands" only. Codex runs in its own workspace sandbox, which usually can't reach the network, so it can edit and test but may not be able to push or install packages.
+
 ## files and images
 
 - up to 10 files per message, 25 MB each. use the **+** button, drag them onto the window, or paste an image.
