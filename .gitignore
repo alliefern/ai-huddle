@@ -1,0 +1,9 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+Thumbs.db
+# Allie's licensed Gopher font is not redistributed. Add your own copy locally if you have one.
+renderer/fonts/*.otf
+renderer/fonts/*.ttf
+renderer/fonts/*.woff2

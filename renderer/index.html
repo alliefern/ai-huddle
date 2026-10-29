@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob:"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AI Huddle</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script src="theme.js"></script>
+  </head>
+  <body>
+    <div class="bar" aria-hidden="true"></div>
+
+    <div class="app">
+      <aside class="side" aria-label="Rooms">
+        <div class="brand">
+          <svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><polygon points="12.00,2.00 13.05,10.18 20.66,7.00 14.10,12.00 20.66,17.00 13.05,13.82 12.00,22.00 10.95,13.82 3.34,17.00 9.90,12.00 3.34,7.00 10.95,10.18" fill="#ceff00" stroke="#ceff00" stroke-width="0.7" stroke-linejoin="round"/></svg>
+          <div class="brand-text">
+            <h1>AI Huddle</h1>
+            <a class="by" href="https://alliefern.com" target="_blank" rel="noopener">Brought to you by Allie Fern</a>
+          </div>
+        </div>
+
+        <div class="side-head">
+          <span class="side-label">Rooms</span>
+          <button id="add-room" class="icon-btn" title="New room" aria-label="New room">+</button>
+        </div>
+        <nav class="rooms" id="rooms"></nav>
+
+        <div class="side-foot">
+          <div class="who-list" id="who-list" aria-label="Agents"></div>
+          <div class="side-btns">
+            <button id="skills-btn" class="side-btn">Skills</button>
+            <button id="settings" class="side-btn">Settings</button>
+          </div>
+        </div>
+      </aside>
+
+      <section class="main">
+        <header class="room-head">
+          <div class="room-title">
+            <h2 id="room-name"># general</h2>
+            <p id="room-topic" class="topic"></p>
+          </div>
+          <div class="room-actions">
+            <label class="switch" title="When on, agents can @mention each other and keep the conversation going (up to the limit in Settings).">
+              <input type="checkbox" id="auto" />
+              <span class="track"><span class="thumb"></span></span>
+              <span class="switch-label">Let them tag each other</span>
+            </label>
+            <button id="stop" class="btn danger" hidden>Stop</button>
+            <button id="room-settings" class="btn ghost" title="Rename, set the topic, pick who is in this room">Room</button>
+            <button id="export" class="btn ghost" title="Save this room as Markdown">Export</button>
+            <button id="clear" class="btn ghost" title="Wipe this room's history">Clear</button>
+          </div>
+        </header>
+
+        <div class="roster" id="roster" aria-label="Agents in this room"></div>
+
+        <main class="messages" id="messages" aria-live="polite"></main>
+        <div class="typing" id="typing" hidden></div>
+
+        <footer class="composer" id="composer">
+          <div class="slash" id="slash" hidden role="listbox"></div>
+          <div class="pending" id="pending" hidden></div>
+          <div class="compose-row">
+            <button id="attach" class="icon-btn dark" title="Attach files (you can also paste images or drag files in)" aria-label="Attach files">+</button>
+            <input type="file" id="file-input" multiple hidden />
+            <textarea id="input" rows="1" placeholder="Message the room"></textarea>
+            <button id="send" class="btn primary">Send</button>
+          </div>
+        </footer>
+      </section>
+    </div>
+
+    <div class="modal" id="modal" hidden>
+      <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+        <div class="sheet-head">
+          <h2 id="sheet-title">Settings</h2>
+          <button id="modal-close" class="btn ghost" aria-label="Close">Close</button>
+        </div>
+        <div class="sheet-body" id="sheet-body"></div>
+        <div class="sheet-foot" id="sheet-foot"></div>
+      </div>
+    </div>
+
+    <div class="toast" id="toast" hidden></div>
+    <script src="renderer.js"></script>
+  </body>
+</html>

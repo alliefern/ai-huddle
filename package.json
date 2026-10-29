@@ -1,0 +1,62 @@
+{
+  "name": "ai-huddle",
+  "version": "0.1.0",
+  "description": "One chat room for Claude, Codex and Grok. Local, no API keys, uses the CLIs you're already logged into.",
+  "main": "main.js",
+  "author": {
+    "name": "Allie Fern",
+    "url": "https://alliefern.com"
+  },
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "test": "node test/engine.test.js",
+    "dist": "electron-builder --win --publish never"
+  },
+  "devDependencies": {
+    "electron": "latest",
+    "electron-builder": "latest"
+  },
+  "build": {
+    "appId": "com.alliefern.aihuddle",
+    "productName": "AI Huddle",
+    "files": [
+      "main.js",
+      "preload.js",
+      "engine.js",
+      "skills.js",
+      "renderer/**/*",
+      "build/icon.png",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "artifactName": "AI-Huddle-Setup.exe",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico"
+    },
+    "portable": {
+      "artifactName": "AI-Huddle-Portable.exe"
+    }
+  },
+  "homepage": "https://alliefern.com",
+  "keywords": [
+    "claude",
+    "codex",
+    "grok",
+    "ai",
+    "chat",
+    "electron",
+    "multi-agent",
+    "cli"
+  ]
+}
