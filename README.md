@@ -13,7 +13,8 @@ I built AI Huddle so the command-line tools you already pay for can share chat r
 - **shared skills.** there's one skill library, and Claude, Codex and Grok all use it. you import a skill once, call it with `/skill-name`, or pin it to a room.
 - **files and images.** you can attach files, drag them in, or paste an image. agents can send files back.
 - **your team, your look.** pick an all-girls, all-boys or mixed team, an avatar, and one of 10 color skins the first time you open it. change any of it later in settings → look.
-- **on your computer.** I don't add telemetry, accounts or analytics, and your chats never leave your computer. the one network call AI Huddle makes itself is asking GitHub if there's a newer version (settings → check for updates at startup turns it off). your agents' CLIs talk to their own services, like they always do.
+- **on your computer.** I don't add telemetry, accounts or analytics, and your chats never leave your computer. the only network calls AI Huddle makes itself are asking GitHub if there's a newer version (settings → check for updates at startup turns it off) and, only when you press clone, `git clone` of a repo you named. your agents' CLIs talk to their own services, like they always do.
+- **shared memory and build mode.** one memory file every agent sees, and an optional per-room builder who can edit files (and run commands) in that room's folder. both are off or empty until you set them up. details below.
 - **auto-updates.** the installed version updates itself from GitHub releases and asks you to restart. the portable exe can't, so download the new one from releases.
 
 ## install
@@ -53,6 +54,14 @@ If the "see if it works" command prints a reply, AI Huddle can use that agent. I
 - Close AI Huddle and open it again after installing a CLI, so it picks up the new install.
 - Settings → **Check my CLIs** shows where it looked. If the tool works in your terminal but not here, type its full path into that agent's Command box.
 - Don't need all three? Switch the ones you don't use off in Settings.
+
+## what permissions it needs
+
+- **no admin rights and no accounts.** it installs for your user only. there's also a portable exe that doesn't install at all.
+- **Windows may warn you.** the app isn't code-signed yet, so SmartScreen can say "unknown publisher". click More info, then Run anyway. the code is all in this repo.
+- **files:** it keeps its chats and settings in your own AppData folder, and reads and writes the work folder you pick. nothing else, unless you turn on build mode for a room.
+- **network:** GitHub for update checks and clones. the CLIs you've logged into talk to their own services.
+- **Grok is optional.** if you don't use it, switch it off in settings and untick it in your rooms. Claude and Codex work fine without it.
 
 ## shared skills
 
@@ -95,8 +104,9 @@ Things to know before you turn it on:
 - **pick your team.** all girls (Claudette, Codexa, Grokette), all boys (Claude, Codex, Grok), or mixed (Claude, Codexa, Grok). the first time you open the app I ask for your name, then your team, then a color skin. settings has all of that later.
 - **usage bars.** each agent in the sidebar has a bar and a percentage for a daily budget you set. I count runs AI Huddle started. that number is a budget you chose, and I can't see the real limit on your plan.
 - **if you want the chat somewhere else,** hover a room and hit ⋯ → export chat. you get one Markdown file of the whole conversation, with every bot's replies included, and you can upload that file to any single AI.
-- **I don't add permission flags.** each CLI runs with its own defaults. if you add something like a skip-permissions flag, that agent can act on your files without asking, in the room's folder.
-- I tell the agents not to touch files unless you ask. that line is in the prompt I send them, so it won't stop an agent that ignores it.
+- **permission flags only appear in build mode.** every room starts chat only, and in that mode I add no permission flags, so each CLI runs with its own defaults. if you make an agent a room's builder, I add the edit or run flags from settings for that agent only. if you add something like a skip-permissions flag yourself, that agent can act on your files without asking.
+- I tell the agents not to touch files unless you ask, and the builder to use a git branch and not push. those lines are in the prompt I send them, so they won't stop an agent that ignores them. use build mode on repos you can roll back.
+- **memory goes everywhere.** whatever is in the shared memory is sent to every agent on every message, so keep secrets out of it.
 - check each provider's terms for how you're allowed to use their CLI. this app runs the tools on your own computer, for you.
 - AI Huddle isn't affiliated with or endorsed by Anthropic, OpenAI or xAI. Claude, Codex, ChatGPT and Grok are their respective owners' trademarks.
 

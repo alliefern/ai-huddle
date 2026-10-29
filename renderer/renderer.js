@@ -1512,7 +1512,7 @@
         const updNote = document.createElement('p');
         updNote.className = 'hint';
         updNote.textContent =
-          'This is the only time AI Huddle contacts anything: it asks GitHub whether a newer version exists and downloads it if so. It sends nothing about you. Switch it off and it never checks (Check now still works).';
+          'AI Huddle asks GitHub whether a newer version exists and downloads it if so. It sends nothing about you. Switch it off and it never checks (Check now still works). The only other time it reaches out itself is when you press clone in a room, which runs git on the repo you named.';
         g.append(updLine, updBtn, updNote);
         const hint = document.createElement('p');
         hint.className = 'hint';
@@ -1591,7 +1591,7 @@
         const about = document.createElement('p');
         about.className = 'hint';
         about.innerHTML =
-          'AI Huddle is free, and the license is MIT. I made it, and I\'m <a href="https://alliefern.com" target="_blank" rel="noopener">Allie Fern</a>. I don\'t collect accounts or analytics, and your chats stay on this computer. the only thing the app contacts is GitHub, to check for a newer version, and you can switch that off above. AI Huddle isn\'t affiliated with Anthropic, OpenAI or xAI.';
+          'AI Huddle is free, and the license is MIT. I made it, and I\'m <a href="https://alliefern.com" target="_blank" rel="noopener">Allie Fern</a>. I don\'t collect accounts or analytics, and your chats stay on this computer. the only things the app contacts itself are GitHub, to check for a newer version (you can switch that off above) and, when you press clone, the repo you named. AI Huddle isn\'t affiliated with Anthropic, OpenAI or xAI.';
         body.append(about);
       },
       [
