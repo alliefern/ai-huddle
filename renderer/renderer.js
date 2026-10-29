@@ -1825,7 +1825,7 @@
       case 'ready': return `Version ${u.latest || ''} is ready. It installs when you restart.`.replace('Version  ', 'The update ');
       case 'current': return `You're up to date (version ${u.version}).`;
       case 'unsupported': return u.message || u.unsupported || '';
-      case 'error': return 'Update check failed: ' + (u.message || 'unknown error');
+      case 'error': return u.message || "I couldn't check for updates.";
       default: return u.unsupported || `Version ${u.version}`;
     }
   }

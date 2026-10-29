@@ -221,7 +221,9 @@ const alive = (pid) => {
 
   console.log('updater');
   {
-    const { Updater } = require('../updater');
+    const { Updater, friendlyError } = require('../updater');
+    check('a missing latest.yml gets a plain explanation', /still being built/.test(friendlyError(new Error('Cannot find latest.yml: HttpError: 404'))));
+    check('being offline gets a plain explanation', /internet connection/.test(friendlyError(new Error('getaddrinfo ENOTFOUND github.com'))));
     const EventEmitter = require('events');
     const mkU = (over, appOver) => {
       const au = new EventEmitter();

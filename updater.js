@@ -5,6 +5,18 @@
 
 const REPO = 'github.com/alliefern/ai-huddle';
 
+// turn electron-updater's raw errors into something a person can act on
+function friendlyError(e) {
+  const raw = String((e && e.message) || e || '').split('\n')[0];
+  if (/latest\.yml|404/.test(raw)) {
+    return "I couldn't find the update files on GitHub yet. If a new version was just released, it's probably still being built. Try again in a few minutes.";
+  }
+  if (/ENOTFOUND|ETIMEDOUT|ECONNREFUSED|ECONNRESET|EAI_AGAIN|net::|socket hang up/i.test(raw)) {
+    return "I couldn't reach GitHub. Check your internet connection and try again.";
+  }
+  return "I couldn't check for updates (" + raw.slice(0, 120) + ').';
+}
+
 class Updater {
   // deps are injected so this can be tested without Electron: { autoUpdater, app, send, isEnabled, env }
   constructor(deps) {
@@ -40,7 +52,7 @@ class Updater {
       });
       this.u.on('error', (e) => {
         this.checking = false;
-        this._set('error', { message: String((e && e.message) || e).split('\n')[0].slice(0, 200) });
+        this._set('error', { message: friendlyError(e) });
       });
     }
   }
@@ -67,7 +79,7 @@ class Updater {
       await this.u.checkForUpdates();
     } catch (e) {
       this.checking = false;
-      this._set('error', { message: String((e && e.message) || e).split('\n')[0].slice(0, 200) });
+      this._set('error', { message: friendlyError(e) });
     }
     return this.getState();
   }
@@ -79,4 +91,5 @@ class Updater {
   }
 }
 
-module.exports = { Updater, REPO };
+module.exports = {
+  friendlyError, Updater, REPO };
