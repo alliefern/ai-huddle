@@ -2,7 +2,7 @@
 title AI Huddle
 cd /d "%~dp0"
 if not exist node_modules (
-  echo First run: installing dependencies. This takes a minute...
+  echo first run, so I'm installing dependencies. this takes a minute...
   call npm install
 )
 call npm start

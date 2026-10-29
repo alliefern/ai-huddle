@@ -67,14 +67,14 @@ function wireEngine() {
   // shared skills
   ipcMain.handle('huddle:skills', () => engine.listSkills());
   ipcMain.handle('huddle:skills-import-folder', async () => {
-    const r = await dialog.showOpenDialog(win, { properties: ['openDirectory'], title: 'Pick a skill folder, or a folder of skills' });
+    const r = await dialog.showOpenDialog(win, { properties: ['openDirectory'], title: 'pick a skill folder, or a folder of skills' });
     return r.canceled ? null : engine.importSkills(r.filePaths);
   });
   ipcMain.handle('huddle:skills-import-file', async () => {
     const r = await dialog.showOpenDialog(win, {
       properties: ['openFile', 'multiSelections'],
-      title: 'Pick .skill or .zip files',
-      filters: [{ name: 'Skill bundles', extensions: ['skill', 'zip'] }],
+      title: 'pick .skill or .zip files',
+      filters: [{ name: 'skill bundles', extensions: ['skill', 'zip'] }],
     });
     return r.canceled ? null : engine.importSkills(r.filePaths);
   });
