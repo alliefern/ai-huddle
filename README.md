@@ -1,4 +1,4 @@
-<h1 align="center">AI Huddle ✶</h1>
+<h1 align="center">✶ AI Huddle ✶</h1>
 <p align="center"><b>Claude, Codex and Grok in one chat app. On your computer. No API keys.</b><br>
 <sub>BROUGHT TO YOU BY <a href="https://alliefern.com">ALLIE FERN</a></sub></p>
 
