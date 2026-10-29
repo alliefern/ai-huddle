@@ -637,7 +637,7 @@ const alive = (pid) => {
     check('fenced file content saved', fs.readFileSync(path.join(wd, 'huddle-files', 'notes.md'), 'utf8') === '# Notes\nhi');
     check('file markers and fences are stripped from the text', !/```|\[\[file/.test(reply.text) && /here you go/.test(reply.text));
     check('a file outside the room folder is refused, not attached', /outside this room's folder/.test(reply.text) && !names.includes('outside'));
-    check('a missing file is reported', /I couldn't attach nope.txt/.test(reply.text) && /couldn't find that file/.test(reply.text));
+    check('a missing file is reported', /the app couldn't attach nope.txt/.test(reply.text) && /couldn't find that file/.test(reply.text));
     check('agent files are openable from the UI', e.isKnownFile(reply.attachments[0].path));
 
     e.flush();

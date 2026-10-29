@@ -4,7 +4,7 @@
 
 ![screenshot of AI Huddle](docs/screenshot.png)
 
-I built AI Huddle so the command-line tools you already pay for can share chat rooms. you make a room per topic, `@mention` whoever you want, and they can talk to each other too. I keep the chats on your computer, and the agents run through the command-line tools you're logged into. I don't ask for API keys or an account, and if anything leaves your computer, it's because one of those command-line tools sent it.
+I built AI Huddle so the command-line tools you already pay for can share chat rooms. you make a room per topic, `@mention` whoever you want, and they can talk to each other too. the app keeps your chats on your computer, and the agents run through the command-line tools you're logged into. the app doesn't ask for API keys or an account. if anything leaves your computer, it's because one of those command-line tools sent it.
 
 ## what it does
 
@@ -13,11 +13,11 @@ I built AI Huddle so the command-line tools you already pay for can share chat r
 - **shared skills.** there's one skill library, and Claude, Codex and Grok all use it. you import a skill once, call it with `/skill-name`, or pin it to a room.
 - **files and images.** you can attach files, drag them in, or paste an image. agents can send files back.
 - **skins.** there are 10, and you pick one in settings → look.
-- **on your computer.** I don't add telemetry or analytics.
+- **on your computer.** the app doesn't include telemetry or analytics.
 
 ## install
 
-**Windows (the easy way):** grab `AI-Huddle-Setup.exe` from the [releases](../../releases) page and run it. Windows will say "Windows protected your PC" because the app isn't code-signed, and that costs money. click **More info**, then **Run anyway**.
+**Windows (the easy way):** grab `AI-Huddle-Setup.exe` from the [releases](../../releases) page and run it. Windows will say "Windows protected your PC" because the app isn't code-signed. I haven't signed it, since that costs money. click **More info**, then **Run anyway**.
 
 **from source** (Windows, Mac or Linux):
 
@@ -47,23 +47,23 @@ after you install one, close AI Huddle and open it again, then use **settings �
 - click **skills** in the sidebar. you can import a skill folder, a folder of skills, a `.skill` or `.zip` file, or pull from another tool's skills folder. it looks for `~/.claude/skills` and similar folders.
 - a skill is a folder with a `SKILL.md`. `name` and `description` at the top are optional, and the rest is the instructions.
 - type `/skill-name` in a message. a menu pops up as you type `/`, and the full instructions go into the prompt for every agent that runs on that message. you can also pin a skill to a room under room → pinned skills.
-- importing makes a copy. I leave your original folders alone, and I don't keep them in sync.
+- importing makes a copy. the app leaves your original folders alone, and it doesn't keep them in sync.
 - skills are plain instructions that get pasted into a prompt. if you don't trust one, skip it.
 
 ## files and images
 
 - up to 10 files per message, 25 MB each. use the **+** button, drag them onto the window, or paste an image.
-- I copy files into a `huddle-files` folder inside the room's working folder, and I tell the agents the path. whether an agent can look at an image depends on that CLI's own tools.
-- agents can send you files with a fenced block starting ` ```file:name.md ` (I save the text) or by saving a file and putting `[[file: path]]` on its own line. if a file is outside the room's folder, I refuse it.
+- the app copies files into a `huddle-files` folder inside the room's working folder, and it tells the agents the path. whether an agent can look at an image depends on that CLI's own tools.
+- agents can send you files with a fenced block starting ` ```file:name.md ` (the app saves the text) or by saving a file and putting `[[file: path]]` on its own line. if a file is outside the room's folder, the app refuses it.
 
 ## be aware
 
-- **every reply uses your real plan limits.** `@all` is three runs. if two agents keep answering each other, that adds up. settings → back-and-forth is where you cap it (the default is 6 per message) or choose "no cap, let them run". you can hit stop whenever you want, and even with no cap I cut them off at 200 replies in a row.
-- **pick your team.** all girls (Claudette, Codexa, Grokette), all boys (Claude, Codex, Grok), or mixed (Claude, Codexa, Grok). the first time you open the app I ask for your name, then your team, then a color skin. settings has all of that later.
-- **usage bars.** each agent in the sidebar has a bar and a percentage for a daily budget you set. I count runs AI Huddle started. that number is a budget you chose, and I can't see the real limit on your plan.
+- **every reply uses your real plan limits.** `@all` is three runs. if two agents keep answering each other, that adds up. settings → back-and-forth is where you cap it (the default is 6 per message) or choose "no cap, let them run". you can hit stop whenever you want. even with no cap, the app cuts them off at 200 replies in a row.
+- **pick your team.** all girls (Claudette, Codexa, Grokette), all boys (Claude, Codex, Grok), or mixed (Claude, Codexa, Grok). the first time you open the app, it asks for your name, then your team, then a color skin. settings has all of that later.
+- **usage bars.** each agent in the sidebar has a bar and a percentage for a daily budget you set. the app counts runs it started. that number is a budget you set. the app can't see the real limit on your plan.
 - **if you want the chat somewhere else,** hover a room and hit ⋯ → export chat. you get one Markdown file of the whole conversation, with every bot's replies included, and you can upload that file to any single AI.
-- **I don't add permission flags.** each CLI runs with its own defaults. if you add something like a skip-permissions flag, that agent can act on your files without asking, in the room's folder.
-- I tell the agents not to touch files unless you ask. that line is in the prompt I send them, so it won't stop an agent that ignores it.
+- **the app doesn't add permission flags.** each CLI runs with its own defaults. if you add something like a skip-permissions flag, that agent can act on your files without asking, in the room's folder.
+- the app tells the agents not to touch files unless you ask. that's just a line in the prompt, so it won't stop an agent that ignores it.
 - check each provider's terms for how you're allowed to use their CLI. this app runs the tools on your own computer, for you.
 - AI Huddle isn't affiliated with or endorsed by Anthropic, OpenAI or xAI. Claude, Codex, ChatGPT and Grok are their respective owners' trademarks.
 

@@ -315,7 +315,7 @@ class Engine extends EventEmitter {
       fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf8');
       fs.renameSync(tmp, this.storeFile);
     } catch (e) {
-      this.emit('error-note', "I couldn't save the chat history: " + e.message);
+      this.emit('error-note', "the app couldn't save the chat history: " + e.message);
     }
   }
 
@@ -460,7 +460,7 @@ class Engine extends EventEmitter {
     if ('archived' in p) {
       const want = !!p.archived;
       if (want && !room.archived) {
-        if (this._activeCount() <= 1) this.emit('error-note', "I can't archive your only active room. make another room first.");
+        if (this._activeCount() <= 1) this.emit('error-note', "the app can't archive your only active room. make another room first.");
         else {
           this.stop(id, true); // nothing keeps running in an archived room
           room.archived = true;
@@ -513,9 +513,9 @@ class Engine extends EventEmitter {
     try {
       buf = Buffer.isBuffer(data) ? data : Buffer.from(data && data.buffer ? data.buffer : data || []);
     } catch (_) {
-      return { error: `I couldn't read ${base}.` };
+      return { error: `the app couldn't read ${base}.` };
     }
-    if (buf.length > MAX_FILE_BYTES) return { error: `${base} is over ${Math.round(MAX_FILE_BYTES / 1048576)} MB, so I left it out.` };
+    if (buf.length > MAX_FILE_BYTES) return { error: `${base} is over ${Math.round(MAX_FILE_BYTES / 1048576)} MB, so the app left it out.` };
     const dir = path.join(this.workDir(room.id), 'huddle-files');
     try {
       fs.mkdirSync(dir, { recursive: true });
@@ -528,7 +528,7 @@ class Engine extends EventEmitter {
       this.files.add(path.resolve(p));
       return this._describeFile(p, name, mime);
     } catch (e) {
-      return { error: `I couldn't save ${base}: ${e.message}` };
+      return { error: `the app couldn't save ${base}: ${e.message}` };
     }
   }
 
@@ -551,14 +551,14 @@ class Engine extends EventEmitter {
       try {
         const real = fs.realpathSync(abs);
         const st = fs.statSync(real);
-        if (!this._inside(fs.realpathSync(wd), real)) return `(I couldn't attach ${p}, because it's outside this room's folder.)`;
-        if (!st.isFile()) return `(I couldn't attach ${p}, because that path isn't a file.)`;
-        if (st.size > MAX_FILE_BYTES) return `(I couldn't attach ${p}, because it's over the size limit.)`;
+        if (!this._inside(fs.realpathSync(wd), real)) return `(the app couldn't attach ${p}, because it's outside this room's folder.)`;
+        if (!st.isFile()) return `(the app couldn't attach ${p}, because that path isn't a file.)`;
+        if (st.size > MAX_FILE_BYTES) return `(the app couldn't attach ${p}, because it's over the size limit.)`;
         this.files.add(path.resolve(real));
         attachments.push(this._describeFile(real, path.basename(real)));
         return '';
       } catch (_) {
-        return `(I couldn't attach ${p}, and I couldn't find that file.)`;
+        return `(the app couldn't attach ${p}, because it couldn't find that file.)`;
       }
     });
     return { text: out.replace(/\n{3,}/g, '\n\n').trim(), attachments };
@@ -856,7 +856,7 @@ class Engine extends EventEmitter {
         .forEach((k) => delete this.queues[k]);
       runs.forEach((e) => killTree(e.child));
       const room = this._room(rid);
-      if (had && !silent && room) this._note(room, 'I stopped this room. nothing else runs here until you send another message.');
+      if (had && !silent && room) this._note(room, 'the app stopped this room. nothing else runs here until you send another message.');
     }
     this._emitStatus();
   }
@@ -903,7 +903,7 @@ class Engine extends EventEmitter {
     try {
       this._handleResult(room, task.agent, agent, task, result);
     } catch (e) {
-      this._note(room, `I hit an error while handling ${agent.label}'s reply: ${e.message}`, 'error');
+      this._note(room, `the app hit an error while handling ${agent.label}'s reply: ${e.message}`, 'error');
     }
     this._emitStatus();
     this._pump(key);
@@ -927,7 +927,7 @@ class Engine extends EventEmitter {
     if (notFound) {
       this._note(
         room,
-        `I couldn't start \`${agent.command}\`. check that the ${agent.label} CLI is installed, that you're logged in, and that I can reach it. settings → check my CLIs shows where I'm looking.`,
+        `the app couldn't start \`${agent.command}\`. check that the ${agent.label} CLI is installed, that you're logged in, and that the app can reach it. settings → check my CLIs shows where the app is looking.`,
         'error'
       );
       return;
@@ -937,7 +937,7 @@ class Engine extends EventEmitter {
       return;
     }
     if (r.timedOut) {
-      this._note(room, `${agent.label} took longer than ${secs}s, so I stopped it.`, 'error');
+      this._note(room, `${agent.label} took longer than ${secs}s, so the app stopped it.`, 'error');
       return;
     }
     if (r.code !== 0) {
@@ -984,7 +984,7 @@ class Engine extends EventEmitter {
         room,
         S.capHandoffs
           ? `paused after ${S.maxAutoRuns} automatic hand-offs, so they don't burn through your usage. tap a tag if you want to keep going, or send a new message. you can change this in settings → back-and-forth.`
-          : `I hit the safety ceiling of ${HARD_CEILING} automatic replies in a row, so I stopped. tap a tag if you want to keep going, or send a new message.`
+          : `the app stopped at the safety ceiling of ${HARD_CEILING} automatic replies in a row. tap a tag if you want to keep going, or send a new message.`
       );
     }
     for (const id of toRun) this._enqueue(room, id, task.round);

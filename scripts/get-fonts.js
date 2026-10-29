@@ -12,5 +12,5 @@ try {
   fs.copyFileSync(path.join(dir, pick), dest);
   console.log('copied Bricolage Grotesque:', pick);
 } catch (e) {
-  console.log('I skipped the font copy (' + e.message + '). AI Huddle will use a system font instead.');
+  console.log('skipped the font copy (' + e.message + '). AI Huddle will use a system font instead.');
 }

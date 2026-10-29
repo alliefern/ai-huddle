@@ -171,7 +171,7 @@ class SkillStore {
         else {
           tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'huddle-skill-'));
           if (!extractArchive(src, tmp)) {
-            res.failed.push(`${path.basename(src)}: I couldn't unzip it`);
+            res.failed.push(`${path.basename(src)}: the app couldn't unzip it`);
             return res;
           }
           root = tmp;
@@ -187,7 +187,7 @@ class SkillStore {
           if ((tmp && d === tmp) || /^huddle-skill-/.test(slug)) slug = slugOf(nm || slug);
         } catch (_) {}
         if (!slug) {
-          res.failed.push(`${d}: I couldn't find a name I can use`);
+          res.failed.push(`${d}: the app couldn't find a name it can use`);
           continue;
         }
         const dest = path.join(this.dir, slug);

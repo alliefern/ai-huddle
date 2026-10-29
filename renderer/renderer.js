@@ -278,13 +278,13 @@
       '<code>@all</code> to ask everyone in this room at once. attach files with <code>+</code>, drag them in, or paste an image. ' +
       'they can tag each other too' +
       (state.config.settings.capHandoffs === false
-        ? ', and I haven\'t capped that back-and-forth, so press stop if it runs away.</p>'
-        : ', and I cap that back-and-forth at ' + esc(max) + ' automatic hand-offs per message so it doesn\'t burn through your usage.</p>');
+        ? ', and there\'s no cap on that back-and-forth, so press stop if it runs away.</p>'
+        : ', and the app caps that back-and-forth at ' + esc(max) + ' automatic hand-offs per message so the back-and-forth doesn\'t burn through your usage.</p>');
     const found = Object.values(state.found);
     if (found.length && found.every((f) => !f.found)) {
       const tip = document.createElement('p');
       tip.innerHTML =
-        'I couldn\'t find the Claude, Codex or Grok command-line tools on this computer. AI Huddle needs the ones you\'re already logged into, so install one and log in, then open settings → check my CLIs. the README has the steps.';
+        'the app couldn\'t find the Claude, Codex or Grok command-line tools on this computer. AI Huddle needs the ones you\'re already logged into, so install one and log in, then open settings → check my CLIs. the README has the steps.';
       d.append(tip);
     }
     box.append(d);
@@ -461,7 +461,7 @@
     await refreshRooms();
     const now = state.rooms.find((x) => x.id === r.id);
     if (on && now && now.archived) {
-      toast(`I archived ${r.name}. you can find it under archived in the sidebar.`);
+      toast(`the app archived ${r.name}. you can find it under archived in the sidebar.`);
       if (state.activeId === r.id) {
         const next = firstLive(r.id);
         if (next) selectRoom(next.id);
@@ -473,7 +473,7 @@
   async function deleteRoomUI(r) {
     if (!confirm(`delete ${r.name} and all its messages? you can't undo this. archive keeps the room if you want it later.`)) return;
     const ok = await api.deleteRoom(r.id);
-    if (ok === false) toast("I can't delete your only active room. make another one first.");
+    if (ok === false) toast("the app can't delete your only active room. make another one first.");
   }
 
   function renderWho() {
@@ -503,7 +503,7 @@
         const pct = Math.round((u.used / u.budget) * 100);
         const bar = document.createElement('div');
         bar.className = 'use' + (pct >= 100 ? ' over' : pct >= 80 ? ' high' : '');
-        bar.title = `${u.used} of your ${u.budget}-run daily budget used today. I count runs AI Huddle started, and you can change the budget in settings.`;
+        bar.title = `${u.used} of your ${u.budget}-run daily budget used today. the app counts runs it started. you can change the budget in settings.`;
         bar.innerHTML = `<span class="track"><i style="width:${Math.min(100, pct)}%"></i></span><span class="pct">${pct}%</span><span class="n">${u.used}/${u.budget}</span>`;
         row.append(bar);
       }
@@ -728,11 +728,11 @@
     const list = (pendingByRoom[state.activeId] = pendingByRoom[state.activeId] || []);
     for (const file of Array.from(fileList)) {
       if (list.length >= MAX_FILES) {
-        toast(`I can take ${MAX_FILES} files on one message, and this one is full.`);
+        toast(`the app can take ${MAX_FILES} files on one message, and this one is full.`);
         break;
       }
       if (file.size > MAX_FILE) {
-        toast(`${file.name} is over 25 MB, so I left it out.`);
+        toast(`${file.name} is over 25 MB, so the app left it out.`);
         continue;
       }
       let name = file.name || '';
@@ -969,7 +969,7 @@
       note.innerHTML =
         'skills you put here go to Claude, Codex and Grok, so they follow the same instructions. ' +
         'call one by typing <code>/skill-name</code> in a message, or pin it to a room (room → pinned skills) so it\'s included every time. ' +
-        'importing makes a copy. I don\'t touch your other tools\' skill folders, and I don\'t keep them in sync. ' +
+        'importing makes a copy. the app doesn\'t touch your other tools\' skill folders, and it doesn\'t keep them in sync. ' +
         'skills are plain instructions pasted into the agent\'s prompt, so if you don\'t trust one, skip it.';
       holder.append(note);
 
@@ -992,7 +992,7 @@
         del.className = 'btn small';
         del.textContent = 'remove';
         del.addEventListener('click', async () => {
-          if (!confirm(`remove /${k.slug} from the library? I won't touch your original copy anywhere else.`)) return;
+          if (!confirm(`remove /${k.slug} from the library? the app won't touch your original copy anywhere else.`)) return;
           await api.removeSkill(k.slug);
           info = await refreshSkills();
           draw();
@@ -1120,7 +1120,7 @@
         const hint = document.createElement('p');
         hint.className = 'hint';
         hint.textContent =
-          "you can tag agents who are in the room, and those agents get that room's messages. pinned skills go to every agent on every message in this room. if you leave the folder empty, I'll use the default shown. files you attach get saved in a huddle-files folder inside it.";
+          "you can tag agents who are in the room, and those agents get that room's messages. the app gives pinned skills to every agent on every message in this room. if you leave the folder empty, the app will use the default shown. the app saves files you attach in a huddle-files folder inside it.";
         g.append(hint);
         body.append(g);
       },
@@ -1219,8 +1219,8 @@
         note.className = 'note-box';
         note.innerHTML =
           'every agent reply is a real run of that agent\'s CLI, on your own login, and it counts against your plan limits. ' +
-          'I run it in that room\'s folder, or in the default folder below if the room doesn\'t have one. ' +
-          'I don\'t add any "skip permissions" flags, so each CLI keeps its own defaults, and if you add flags yourself, the agent can act on your files without asking.';
+          'the app runs it in that room\'s folder, or in the default folder below if the room doesn\'t have one. ' +
+          'the app doesn\'t add any "skip permissions" flags, so each CLI keeps its own defaults. if you add flags yourself, the agent can act on your files without asking.';
         body.append(note);
 
         const look = document.createElement('div');
@@ -1233,7 +1233,7 @@
         look.append(buildTeamPicker(), buildThemeGrid());
         const lh = document.createElement('p');
         lh.className = 'hint';
-        lh.textContent = 'the team and the skin show up right away, and I remember the skin on this computer.';
+        lh.textContent = 'the team and the skin show up right away. the app remembers the skin on this computer.';
         look.append(lh);
         const again = document.createElement('button');
         again.className = 'btn small';
@@ -1261,7 +1261,7 @@
         const capHint = document.createElement('p');
         capHint.className = 'hint warn';
         capHint.textContent =
-          'with no cap, agents keep tagging each other until they stop on their own or you press stop. each reply counts as a run on your plan, and I still cut them off at 200 in a row.';
+          'with no cap, agents keep tagging each other until they stop on their own or you press stop. each reply counts as a run on your plan. the app still cuts them off at 200 in a row.';
         capSel.addEventListener('change', syncCap);
         refs.settings.timeoutSec = numInput(c.settings.timeoutSec, 10, 1800);
         refs.settings.contextMessages = numInput(c.settings.contextMessages, 5, 200);
@@ -1296,7 +1296,7 @@
         g.append(hint);
         const bh = document.createElement('p');
         bh.className = 'hint';
-        bh.textContent = 'the bars in the sidebar count how many runs AI Huddle started today, against a daily budget you set for each agent below. I can\'t see the real limit on your plan, or runs from other apps.';
+        bh.textContent = 'the bars in the sidebar count how many runs AI Huddle started today, against a daily budget you set for each agent below. the app can\'t see the real limit on your plan. it also can\'t see runs from other apps.';
         g.append(bh);
         body.append(g);
 
@@ -1346,10 +1346,10 @@
           hp.className = 'hint';
           hp.innerHTML =
             id === 'grok'
-              ? 'the default is <code>--no-auto-update -p {prompt}</code>, with "right in the arguments" selected. that\'s how xAI\'s headless mode works (<code>grok -p "prompt"</code>). if Grok isn\'t installed, open PowerShell and run <code>irm https://x.ai/cli/install.ps1 | iex</code>, then run <code>grok</code> once so you\'re logged in. if it isn\'t on your PATH, I also look in <code>%USERPROFILE%\\.grok\\bin</code>.'
+              ? 'the default is <code>--no-auto-update -p {prompt}</code>, with "right in the arguments" selected. that\'s how xAI\'s headless mode works (<code>grok -p "prompt"</code>). if Grok isn\'t installed, open PowerShell and run <code>irm https://x.ai/cli/install.ps1 | iex</code>, then run <code>grok</code> once so you\'re logged in. if it isn\'t on your PATH, the app also looks in <code>%USERPROFILE%\\.grok\\bin</code>.'
               : id === 'codex'
-              ? 'the default is <code>exec --skip-git-repo-check -</code>, and it reads the prompt from stdin. the skip flag is there because Codex exits with code 1 in any folder that isn\'t a git repo. I split arguments on spaces.'
-              : 'the default is <code>-p</code>, which is headless print mode, with the prompt on stdin. I split arguments on spaces.';
+              ? 'the default is <code>exec --skip-git-repo-check -</code>, and it reads the prompt from stdin. the skip flag is there because Codex exits with code 1 in any folder that isn\'t a git repo. the app splits arguments on spaces.'
+              : 'the default is <code>-p</code>, which is headless print mode, with the prompt on stdin. the app splits arguments on spaces.';
           box.append(hp);
           body.append(box);
         });
@@ -1357,7 +1357,7 @@
         const about = document.createElement('p');
         about.className = 'hint';
         about.innerHTML =
-          'AI Huddle is free, and the license is MIT. I made it, and I\'m <a href="https://alliefern.com" target="_blank" rel="noopener">Allie Fern</a>. I don\'t collect accounts or analytics, and the app doesn\'t phone home, so I keep it all on this computer. AI Huddle isn\'t affiliated with Anthropic, OpenAI or xAI.';
+          'AI Huddle is free, and the license is MIT. I made it, and I\'m <a href="https://alliefern.com" target="_blank" rel="noopener">Allie Fern</a>. the app doesn\'t collect accounts or analytics or phone home. everything stays on this computer. AI Huddle isn\'t affiliated with Anthropic, OpenAI or xAI.';
         body.append(about);
       },
       [
@@ -1373,7 +1373,7 @@
             const missing = Object.entries(found)
               .filter(([, f]) => !f.found)
               .map(([id]) => agent(id).label);
-            toast(missing.length ? `I can't find ${missing.join(', ')}` : 'I found Claude, Codex and Grok');
+            toast(missing.length ? `the app can't find ${missing.join(', ')}` : 'the app found Claude, Codex and Grok');
           },
         },
         'spacer',
