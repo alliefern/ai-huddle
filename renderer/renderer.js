@@ -57,7 +57,12 @@
   const agent = (id) => state.config && state.config.agents[id];
 
   // Avatar art lives in renderer/avatars/<team>/<agent>.png. Teams without art yet fall back to initials.
-  const AVATAR_ART = { mixed: ['claude', 'codex', 'grok'], girls: [], boys: [] };
+  // Which picture folder each agent uses per team. Black-and-white art, so every skin looks right.
+  const AVATAR_ART = {
+    mixed: { claude: 'boys', codex: 'girls', grok: 'boys' },
+    girls: { claude: 'girls', codex: 'girls', grok: 'girls' },
+    boys: { claude: 'boys', codex: 'boys', grok: 'boys' },
+  };
   const TEAM_NAMES = {
     mixed: { title: 'Mixed team', names: ['Claude', 'Codexa', 'Grok'] },
     girls: { title: 'All girls', names: ['Claudette', 'Codexa', 'Grokette'] },
@@ -65,8 +70,8 @@
   };
   const teamId = () => (state.config && state.config.settings.team) || 'mixed';
   function avatarUrl(id, team) {
-    const t = team || teamId();
-    return (AVATAR_ART[t] || []).includes(id) ? `avatars/${t}/${id}.png` : null;
+    const dir = (AVATAR_ART[team || teamId()] || {})[id];
+    return dir ? `avatars/${dir}/${id}.png` : null;
   }
   function fillAvatar(el, id, initial, team) {
     const url = avatarUrl(id, team);
