@@ -118,6 +118,12 @@ things to know before you turn it on:
 - the permission flags for each CLI are in **settings**, under each agent. I wrote them from the CLIs' docs and haven't tested them against every version, so try a throwaway repo first and check them against `--help` for your version. leave a level blank and that level won't work for that agent.
 - Grok's only build level is full auto-approve, so it's offered as "edit files and run commands" only. Codex runs in its own workspace sandbox, which usually can't reach the network, so it can edit and test but may not be able to push or install packages.
 
+## tools panel (what each agent can actually do)
+
+The **tools** button in a room's header checks each CLI on your computer and shows what it found: whether it's installed, its version, the connectors (MCP servers) set up in that CLI with their real status, and whether that CLI's own skills folder has your shared skills. A dot on the button means something an agent needs isn't working.
+
+It never assumes. Two buttons run a real tiny test through the same launcher rooms use: **test it answers** (installed and logged in) and **test web access** (open a live page and report its title). Each test is one real run on that agent's plan. If an agent says it can't browse, you see its own reason. A connector that hangs shows up as *stuck* instead of freezing the app, and **recheck connectors** tries again.
+
 ## files and images
 
 - up to 10 files per message, 25 MB each. use the **+** button, drag them onto the window, or paste an image.

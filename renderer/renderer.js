@@ -1036,7 +1036,237 @@
     draw();
   }
 
+
+  // ---------- tools: what each agent can actually do (checked on this computer, never assumed) ----------
+
+  const toolBusy = {};
+
+  function toolsNeedAttention() {
+    const t = state.tools;
+    if (!t || !t.agents) return false;
+    return Object.values(t.agents).some(
+      (a) => a.enabled && (!a.installed || (a.mcp && ['failed', 'stalled'].includes(a.mcp.state)) || (a.mcp && a.mcp.servers || []).some((s) => ['failed', 'needs-auth'].includes(s.status)))
+    );
+  }
+
+  function updateToolsBadge() {
+    const b = $('#tools-btn');
+    if (!b) return;
+    const bad = toolsNeedAttention();
+    b.classList.toggle('attn', bad);
+    b.title = bad ? 'something an agent needs isn\'t working. open this to see what.' : 'see what each agent can actually do on this computer';
+  }
+
+  const MCP_WORDS = { connected: 'connected', failed: 'not connecting', 'needs-auth': 'needs you to log in', off: 'switched off', enabled: 'enabled', unknown: "couldn't tell" };
+
+  function toolRow(grid, label, node) {
+    const l = document.createElement('label');
+    l.textContent = label;
+    const v = document.createElement('div');
+    v.className = 'tool-val';
+    if (typeof node === 'string') v.textContent = node;
+    else v.append(node);
+    grid.append(l, v);
+    return v;
+  }
+
+  function testLine(res, idleText) {
+    const p = document.createElement('div');
+    if (!res) {
+      p.textContent = idleText;
+      return p;
+    }
+    const head = document.createElement('div');
+    head.textContent = (res.ok ? 'works: ' : "didn't work: ") + res.summary;
+    head.className = res.ok ? 'tool-ok' : 'tool-bad';
+    p.append(head);
+    if (res.detail) {
+      const d = document.createElement('pre');
+      d.className = 'tool-raw';
+      d.textContent = res.detail;
+      p.append(d);
+    }
+    return p;
+  }
+
+  function fillTools(body) {
+    body.innerHTML = '';
+    const t = state.tools || { agents: {}, tests: {} };
+    const room = activeRoom();
+    const intro = document.createElement('p');
+    intro.className = 'hint';
+    intro.textContent =
+      "this is what I found on this computer, not what the apps promise. a tool showing up here means the CLI has it. only the test buttons tell you whether it works from inside AI Huddle, and each test is one real run on that agent's plan.";
+    body.append(intro);
+
+    Object.entries(state.config.agents).forEach(([id, ag]) => {
+      const a = (t.agents || {})[id];
+      const tests = (t.tests || {})[id] || {};
+      const box = document.createElement('div');
+      box.className = 'group';
+      box.style.setProperty('--c', ag.color);
+      const h = document.createElement('h3');
+      h.innerHTML = `<span class="dot ${a && a.installed ? 'found' : 'missing'}"></span>${esc(ag.label)} <span class="sub">@${esc(id)}${a && a.version ? ' · ' + esc(a.version) : ''}</span>`;
+      box.append(h);
+      const grid = document.createElement('div');
+      grid.className = 'grid tool-grid';
+
+      if (!a) {
+        toolRow(grid, 'status', 'still checking…');
+        box.append(grid);
+        body.append(box);
+        return;
+      }
+      if (!a.enabled) {
+        toolRow(grid, 'status', "switched off in settings, so I didn't check it.");
+        box.append(grid);
+        body.append(box);
+        return;
+      }
+
+      toolRow(grid, 'installed', a.installed ? 'yes: ' + a.path : "I can't find `" + ag.command + "`. install that CLI and log in (the README has the steps), then press recheck.");
+
+      // what this room allows
+      let here = 'chat only in this room. it can read and talk, not change files.';
+      const sup = (lvl) => ((ag.accessArgs || {})[lvl] || []).length > 0;
+      if (room && room.builder === id && room.access && room.access !== 'chat') {
+        here = sup(room.access)
+          ? `the builder in ${room.name}: ${room.access === 'run' ? 'can edit files and run commands' : 'can edit files'} in the room's folder.`
+          : `set as builder in ${room.name}, but it has no "${room.access}" setting, so it only chats. change that in settings.`;
+      } else if (room && room.builder && room.access !== 'chat') {
+        here = `chat only in this room. ${(state.config.agents[room.builder] || {}).label || room.builder} is the builder.`;
+      }
+      toolRow(grid, 'in this room', here);
+
+      // quick tests
+      const helloBtn = document.createElement('button');
+      helloBtn.className = 'btn small';
+      helloBtn.textContent = toolBusy[id + 'hello'] ? 'testing…' : 'test it answers';
+      helloBtn.disabled = !a.installed || !!toolBusy[id + 'hello'];
+      helloBtn.addEventListener('click', () => runToolTest(id, 'hello'));
+      const hv = toolRow(grid, 'answers', testLine(tests.hello, "not tested yet. this checks it's installed and logged in."));
+      hv.append(helloBtn);
+
+      const webBtn = document.createElement('button');
+      webBtn.className = 'btn small';
+      webBtn.textContent = toolBusy[id + 'web'] ? 'testing…' : 'test web access';
+      webBtn.disabled = !a.installed || !!toolBusy[id + 'web'];
+      webBtn.addEventListener('click', () => runToolTest(id, 'web'));
+      const wv = toolRow(grid, 'web', testLine(tests.web, 'not tested yet. this asks it to open a live page and tell me the title.'));
+      wv.append(webBtn);
+
+      // connectors (MCP)
+      const mv = document.createElement('div');
+      const m = a.mcp;
+      if (!a.installed || !m) {
+        mv.textContent = a.installed ? 'not checked.' : 'needs the CLI first.';
+      } else {
+        const head = document.createElement('div');
+        head.textContent =
+          m.state === 'ok' ? `${m.servers.length} connector${m.servers.length === 1 ? '' : 's'} set up in this CLI:` :
+          m.state === 'none' ? 'none set up in this CLI.' :
+          m.state === 'stalled' ? 'stuck: ' + m.note :
+          m.note || "couldn't tell.";
+        if (m.state === 'stalled') head.className = 'tool-bad';
+        mv.append(head);
+        if (m.state === 'ok') {
+          const ul = document.createElement('ul');
+          ul.className = 'tool-list';
+          m.servers.forEach((s) => {
+            const li = document.createElement('li');
+            li.className = ['failed'].includes(s.status) ? 'tool-bad' : s.status === 'connected' ? 'tool-ok' : '';
+            li.textContent = `${s.name}: ${MCP_WORDS[s.status] || s.status}`;
+            ul.append(li);
+          });
+          mv.append(ul);
+        }
+        if (m.raw) {
+          const det = document.createElement('details');
+          const sm = document.createElement('summary');
+          sm.textContent = 'what the CLI said';
+          const pre = document.createElement('pre');
+          pre.className = 'tool-raw';
+          pre.textContent = m.raw;
+          det.append(sm, pre);
+          mv.append(det);
+        }
+      }
+      const rb = document.createElement('button');
+      rb.className = 'btn small';
+      rb.textContent = toolBusy[id + 'mcp'] ? 'checking…' : 'recheck connectors';
+      rb.disabled = !a.installed || !!toolBusy[id + 'mcp'];
+      rb.addEventListener('click', async () => {
+        toolBusy[id + 'mcp'] = true;
+        fillTools($('#sheet-body'));
+        try {
+          state.tools = await api.refreshTools(id);
+        } finally {
+          toolBusy[id + 'mcp'] = false;
+          updateToolsBadge();
+          if (isToolsOpen()) fillTools($('#sheet-body'));
+        }
+      });
+      mv.append(rb);
+      toolRow(grid, 'connectors', mv);
+
+      // skills folder
+      const s = a.skills || {};
+      let sk;
+      if (!s.known) sk = "I don't know where this CLI keeps skills.";
+      else if (!s.exists) sk = `no skills folder yet (${s.dir}). the shared library isn't in this CLI.`;
+      else sk = `${s.count} in ${s.dir}. ${s.sharedHere} of ${s.sharedTotal} shared skills are there.`;
+      toolRow(grid, 'its own skills', sk);
+
+      box.append(grid);
+      body.append(box);
+    });
+  }
+
+  function isToolsOpen() {
+    return !modal.hidden && $('#sheet-title').textContent === 'tools';
+  }
+
+  async function runToolTest(id, kind) {
+    toolBusy[id + kind] = true;
+    if (isToolsOpen()) fillTools($('#sheet-body'));
+    try {
+      await api.testTool(id, kind);
+      state.tools = await api.getTools();
+    } catch (e) {
+      toast("that test didn't run: " + e.message);
+    } finally {
+      toolBusy[id + kind] = false;
+      updateToolsBadge();
+      if (isToolsOpen()) fillTools($('#sheet-body'));
+    }
+  }
+
+  async function openToolsSheet() {
+    state.tools = await api.getTools();
+    openSheet('tools', fillTools, [
+      {
+        label: 'recheck everything',
+        kind: 'ghost',
+        onClick: async () => {
+          toolBusy.all = true;
+          toast('checking…');
+          state.tools = await api.refreshTools();
+          toolBusy.all = false;
+          updateToolsBadge();
+          if (isToolsOpen()) fillTools($('#sheet-body'));
+        },
+      },
+      'spacer',
+    ]);
+    if (!Object.keys(state.tools.agents || {}).length) {
+      state.tools = await api.refreshTools();
+      updateToolsBadge();
+      if (isToolsOpen()) fillTools($('#sheet-body'));
+    }
+  }
+
   $('#skills-btn').addEventListener('click', openSkillsSheet);
+  $('#tools-btn').addEventListener('click', openToolsSheet);
   $('#memory-btn').addEventListener('click', openMemorySheet);
 
   const MEMORY_PROMPT =
@@ -1887,6 +2117,15 @@
     renderAll();
   });
   api.onNote((t) => toast(t));
+  api.onTools((c) => {
+    state.tools = c;
+    updateToolsBadge();
+    if (isToolsOpen()) fillTools($('#sheet-body'));
+  });
+  api.getTools().then((c) => {
+    state.tools = c;
+    updateToolsBadge();
+  });
   document.addEventListener('huddle-theme', () => {
     if (!state.config) return;
     renderAll();
