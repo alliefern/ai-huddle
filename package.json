@@ -31,6 +31,7 @@
       "engine.js",
       "skills.js",
       "updater.js",
+      "capabilities.js",
       "renderer/**/*",
       "build/icon.png",
       "package.json",

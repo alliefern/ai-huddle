@@ -20,6 +20,7 @@ const MIME = {
   pdf: 'application/pdf', txt: 'text/plain', md: 'text/markdown', csv: 'text/csv', json: 'application/json', html: 'text/html',
 };
 const { SkillStore, candidateSources } = require('./skills');
+const caps = require('./capabilities');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -52,6 +53,7 @@ const DEFAULTS = {
       args: ['-p'],
       input: 'stdin',
       // edit: file edits are applied automatically. run: also any shell command (git, npm, builds...).
+      probe: { version: ['--version'], mcp: ['mcp', 'list'] },
       accessArgs: { edit: ['--permission-mode', 'acceptEdits'], run: ['--permission-mode', 'acceptEdits', '--allowedTools', 'Bash'] },
     },
     codex: {
@@ -64,6 +66,7 @@ const DEFAULTS = {
       args: ['exec', '--skip-git-repo-check', '-'],
       input: 'stdin',
       // Codex's own sandbox: it can write inside the folder and run commands there, but usually has no network.
+      probe: { version: ['--version'], mcp: ['mcp', 'list'] },
       accessArgs: { edit: ['--sandbox', 'workspace-write'], run: ['--sandbox', 'workspace-write'] },
     },
     grok: {
@@ -76,6 +79,7 @@ const DEFAULTS = {
       args: ['--no-auto-update', '-p', '{prompt}'],
       input: 'arg',
       // Grok has no documented "edit only" setting. Its build mode auto-approves every tool call, so it only offers 'run'.
+      probe: { version: ['--version'], mcp: ['mcp', 'list'] },
       accessArgs: { run: ['--always-approve'] },
     },
   },
@@ -399,6 +403,11 @@ class Engine extends EventEmitter {
             }
           }
           a.accessArgs = next;
+        }
+        if (trusted && p.probe && typeof p.probe === 'object') {
+          const next = {};
+          for (const k of ['version', 'mcp']) if (Array.isArray(p.probe[k])) next[k] = p.probe[k].map(String).filter((x) => x.length);
+          a.probe = next;
         }
         if ('dailyBudget' in p) {
           const n = Number(p.dailyBudget);
@@ -1197,13 +1206,14 @@ class Engine extends EventEmitter {
     return { level, args: args.slice(), unsupported: false };
   }
 
-  async _exec(room, agentId, entry) {
+  // over (optional): {prompt, cwd, timeoutMs}. Used for health tests, which run outside any room and with no build flags.
+  async _exec(room, agentId, entry, over) {
     const agent = this.config.agents[agentId];
     const S = this.config.settings;
-    const cwd = this.workDir(room.id);
+    const cwd = over && over.cwd ? over.cwd : this.workDir(room.id);
 
     let args = (agent.args || []).slice();
-    const acc = this._accessFor(room, agentId);
+    const acc = over ? { args: [] } : this._accessFor(room, agentId);
     if (acc.args.length) {
       // goes after a leading subcommand (codex "exec"), otherwise first
       const at = args.length && !String(args[0]).startsWith('-') ? 1 : 0;
@@ -1211,7 +1221,7 @@ class Engine extends EventEmitter {
     }
     const usesFile = agent.input === 'file' || args.some((a) => a.includes('{promptFile}'));
     const usesArg = agent.input === 'arg' || args.some((a) => a.includes('{prompt}'));
-    const prompt = this._buildPrompt(room, agentId, usesArg ? ARG_MODE_MAX_CHARS : undefined);
+    const prompt = over && over.prompt != null ? over.prompt : this._buildPrompt(room, agentId, usesArg ? ARG_MODE_MAX_CHARS : undefined);
 
     const resolved = await resolveCommand(agent.command);
     if (!resolved) return { error: Object.assign(new Error('not found'), { code: 'ENOENT' }), stdout: '', stderr: '' };
@@ -1272,7 +1282,7 @@ class Engine extends EventEmitter {
       timer = setTimeout(() => {
         timedOut = true;
         killTree(child);
-      }, S.timeoutSec * 1000);
+      }, over && over.timeoutMs ? over.timeoutMs : S.timeoutSec * 1000);
 
       child.stdout.setEncoding('utf8');
       child.stderr.setEncoding('utf8');
@@ -1289,6 +1299,98 @@ class Engine extends EventEmitter {
       if (usesFile || usesArg) child.stdin.end();
       else child.stdin.end(prompt, 'utf8');
     });
+  }
+
+  // ---------- what can each agent actually do? ----------
+
+  _capHelpers() {
+    return { IS_WIN, winQuote, killTree, resolveCommand, stripAnsi, mcpTimeoutMs: this.opts.probeTimeoutMs };
+  }
+
+  _sharedSlugs() {
+    try {
+      return (this.listSkills().skills || []).map((s) => s.slug);
+    } catch (_) {
+      return [];
+    }
+  }
+
+  async probeAgent(id) {
+    const agent = this.config.agents[id];
+    if (!agent) return null;
+    const res = await caps.probeAgent(this._capHelpers(), {
+      agentId: id,
+      agent,
+      sharedSlugs: this._sharedSlugs(),
+      home: this.opts.homeDir || os.homedir(),
+    });
+    this.caps = this.caps || { checkedAt: 0, agents: {}, tests: {} };
+    this.caps.agents[id] = res;
+    this.caps.checkedAt = Date.now();
+    this.emit('tools', this.getCapabilities());
+    return res;
+  }
+
+  async probeAll() {
+    await Promise.all(Object.keys(this.config.agents).map((id) => this.probeAgent(id)));
+    return this.getCapabilities();
+  }
+
+  getCapabilities() {
+    const c = this.caps || { checkedAt: 0, agents: {}, tests: {} };
+    return JSON.parse(JSON.stringify(c));
+  }
+
+  // A real, tiny run through the same launcher rooms use, with no build flags. kind: 'hello' | 'web'.
+  // It counts as a run on the usage bar because it is one.
+  async testAgent(id, kind) {
+    const agent = this.config.agents[id];
+    if (!agent) return { ok: false, summary: "I don't know that agent." };
+    if (kind !== 'hello' && kind !== 'web') return { ok: false, summary: "I don't know that test." };
+    const secs = Math.min(this.config.settings.timeoutSec, 120);
+    const prompt =
+      kind === 'hello'
+        ? 'Reply with exactly: HUDDLE-OK'
+        : 'Use your web tools to open https://example.com and read its page title. Reply with one line: TITLE: <the title>. ' +
+          "If you can't browse in this mode, reply with: NO-WEB: <one sentence on why, including any setting that blocks it>.";
+    this._bumpUsage(id);
+    this._emitStatus();
+    const t0 = Date.now();
+    const r = await this._exec(null, id, {}, { prompt, cwd: this.workDir(), timeoutMs: secs * 1000 });
+    const ms = Date.now() - t0;
+    const out = stripAnsi(r.stdout || '').trim();
+    const errTail = stripAnsi(r.stderr || '')
+      .split(/\r?\n/)
+      .filter((l) => l.trim() && !/rmcp::|worker quit with fatal|Transport channel closed/i.test(l) && !/^\(HttpRequest\(/.test(l.trim()))
+      .join('\n')
+      .trim()
+      .slice(-400);
+    let result;
+    if ((r.error && r.error.code === 'ENOENT') || (!out && /is not recognized|command not found/i.test(r.stderr || ''))) {
+      result = { ok: false, summary: `I couldn't start \`${agent.command}\`. it isn't installed, or I can't find it.` };
+    } else if (r.error) {
+      result = { ok: false, summary: `${agent.label} failed to run: ${r.error.message}` };
+    } else if (r.timedOut) {
+      result = { ok: false, summary: `${agent.label} didn't answer within ${secs}s, so I stopped it. it may be waiting on a login or a stuck connector.`, detail: errTail };
+    } else if (r.code !== 0) {
+      result = { ok: false, summary: `${agent.label} exited with code ${r.code}.`, detail: errTail || out.slice(-400) };
+    } else if (kind === 'hello') {
+      result = /HUDDLE-OK/.test(out)
+        ? { ok: true, summary: `${agent.label} answered, so it's installed and logged in.` }
+        : { ok: false, summary: `${agent.label} ran, but didn't answer the way I asked.`, detail: out.slice(0, 400) };
+    } else if (/NO-WEB/.test(out)) {
+      result = { ok: false, summary: `${agent.label} says it can't browse here.`, detail: out.slice(0, 400) };
+    } else if (/TITLE:/i.test(out) && /example domain/i.test(out)) {
+      result = { ok: true, summary: `${agent.label} read a live web page.`, detail: out.slice(0, 200) };
+    } else {
+      result = { ok: false, summary: `${agent.label} replied, but I can't tell it read the page.`, detail: out.slice(0, 400) };
+    }
+    result = { kind, ms, at: Date.now(), ...result };
+    this.caps = this.caps || { checkedAt: 0, agents: {}, tests: {} };
+    this.caps.tests = this.caps.tests || {};
+    this.caps.tests[id] = { ...(this.caps.tests[id] || {}), [kind]: result };
+    this.emit('tools', this.getCapabilities());
+    return result;
   }
 
   // ---------- export ----------
