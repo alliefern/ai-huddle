@@ -846,6 +846,151 @@ const alive = (pid) => {
     check('export lists attachments', /attachment: cat.png/.test(e2.exportMarkdown(e2.rooms[0].id)));
   }
 
+  console.log('permission cards (codex app-server driver)');
+  {
+    const APP = path.join(__dirname, 'fake-appserver.js');
+    const mkApp = (mode, extra = {}) => {
+      const logf = path.join(os.tmpdir(), 'huddle-applog-' + process.pid + '-' + Math.random().toString(36).slice(2));
+      process.env.FAKE_APP = mode;
+      process.env.FAKE_APP_LOG = logf;
+      const e = mk(extra, (cfg) => {
+        cfg.agents.codex.driver = 'codex-appserver';
+        cfg.agents.codex.driverArgs = [APP];
+      });
+      e.logf = logf;
+      e.updateRoom(e.rooms[0].id, { builder: 'codex', access: 'run', approval: 'ask' });
+      return e;
+    };
+    const thread = (e) => fs.readFileSync(e.logf, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)).find((x) => x.method === 'thread/start').params;
+    const waitPerm = async (e, n = 1) => {
+      const t0 = Date.now();
+      while (e.getPermissions().length < n) {
+        if (Date.now() - t0 > 8000) throw new Error('no permission card appeared');
+        await sleep(25);
+      }
+      return e.getPermissions();
+    };
+    const lastReply = (e) => e.rooms[0].transcript.filter((m) => m.from === 'codex').pop();
+
+    // allow once
+    let e = mkApp('cmd');
+    check('rooms default to asking', e.rooms[0].approval === 'ask');
+    e.send(e.rooms[0].id, '@codex install sharp');
+    let p = (await waitPerm(e))[0];
+    check('a card appears with the command, folder and reason', p.kind === 'command' && p.detail === 'npm install sharp' && p.cwd === '/work' && p.reason === 'install a dependency' && p.agent === 'codex', p);
+    check('status shows it is waiting on you', e._status().pending === 1 && /waiting/.test(JSON.stringify(e._status().doing)));
+    check('ask level: codex told to ask, sandboxed to the folder', thread(e).approvalPolicy === 'on-request' && thread(e).sandbox === 'workspace-write', thread(e));
+    check('no remember button at the ask level', p.canRemember === false);
+    e.answerPermission(p.id, 'once');
+    await idle(e);
+    check('allow once: agent is told yes, and its reply is posted', /decisions: accept\./.test(lastReply(e).text), lastReply(e));
+    check('cards clear after answering', e.getPermissions().length === 0);
+    check('activity log records asked, allowed and what it did', ['asked', 'allowed', 'did'].every((k) => e.getActivity(e.rooms[0].id).some((a) => a.kind === k)));
+    check('doing text is cleared when done', JSON.stringify(e._status().doing) === '{}');
+
+    // deny
+    e = mkApp('cmd');
+    e.send(e.rooms[0].id, '@codex install sharp');
+    p = (await waitPerm(e))[0];
+    e.answerPermission(p.id, 'deny');
+    await idle(e);
+    check('deny: agent is told no', /decisions: decline\./.test(lastReply(e).text), lastReply(e));
+    check('deny is logged', e.getActivity(e.rooms[0].id).some((a) => a.kind === 'denied'));
+
+    // allow for this chat
+    e = mkApp('two');
+    e.updateRoom(e.rooms[0].id, { approval: 'chat' });
+    e.send(e.rooms[0].id, '@codex install sharp twice');
+    p = (await waitPerm(e))[0];
+    check('chat level offers "allow for this chat"', p.canRemember === true);
+    e.answerPermission(p.id, 'chat');
+    await idle(e);
+    check('second ask of the same kind is allowed without a card', /decisions: acceptForSession,acceptForSession/.test(lastReply(e).text), lastReply(e));
+    e.send(e.rooms[0].id, '@codex again');
+    await idle(e);
+    check('the grant lasts for the chat', e.getPermissions().length === 0 && /acceptForSession,acceptForSession/.test(lastReply(e).text));
+    e.updateRoom(e.rooms[0].id, { approval: 'ask' });
+    check('changing level forgets grants', !e.grants.has(e.rooms[0].id));
+
+    // folder + auto
+    e = mkApp('cmd');
+    e.updateRoom(e.rooms[0].id, { approval: 'folder' });
+    e.send(e.rooms[0].id, '@codex go');
+    await sleep(300);
+    check('folder level: sandbox stays on the folder and nothing is blocked on a card', thread(e).approvalPolicy === 'never' && thread(e).sandbox === 'workspace-write');
+    e.stop();
+    e = mkApp('quiet');
+    e.updateRoom(e.rooms[0].id, { approval: 'auto' });
+    e.send(e.rooms[0].id, '@codex go');
+    await idle(e);
+    check('auto level: no approvals, no sandbox', thread(e).approvalPolicy === 'never' && thread(e).sandbox === 'danger-full-access' && /nothing needed approval/.test(lastReply(e).text), thread(e));
+
+    // edit-only room refuses commands without bothering you; file changes still ask
+    e = mkApp('cmd');
+    e.updateRoom(e.rooms[0].id, { access: 'edit' });
+    e.send(e.rooms[0].id, '@codex install');
+    await idle(e);
+    check('edit-only room auto-denies commands, no card', e.getPermissions().length === 0 && /decline/.test(lastReply(e).text) && e.getActivity(e.rooms[0].id).some((a) => /edit-files only/.test(a.text)));
+    e = mkApp('file');
+    e.updateRoom(e.rooms[0].id, { access: 'edit' });
+    e.send(e.rooms[0].id, '@codex write');
+    p = (await waitPerm(e))[0];
+    check('file-change card lists what it wants', p.kind === 'files' && /\/etc/.test(p.reason + p.detail), p);
+    e.answerPermission(p.id, 'once');
+    await idle(e);
+
+    // older method names
+    e = mkApp('legacy');
+    e.send(e.rooms[0].id, '@codex install');
+    p = (await waitPerm(e))[0];
+    check('old-style request shows the command', p.detail === 'npm install sharp');
+    e.answerPermission(p.id, 'once');
+    await idle(e);
+    check('old-style answers use approved/denied', /decisions: approved\./.test(lastReply(e).text), lastReply(e));
+
+    // stopping with a card open
+    e = mkApp('cmd');
+    e.send(e.rooms[0].id, '@codex install');
+    await waitPerm(e);
+    e.stop(e.rooms[0].id);
+    await idle(e);
+    check('stop clears open cards and posts nothing from the agent', e.getPermissions().length === 0 && !lastReply(e));
+
+    // waiting on you never trips the timeout
+    e = mkApp('cmd', { timeoutSec: 10 });
+    e.config.settings.timeoutSec = 10;
+    e.send(e.rooms[0].id, '@codex install');
+    p = (await waitPerm(e))[0];
+    await sleep(500);
+    check('card stays open while the clock is paused', e.getPermissions().length === 1);
+    e.answerPermission(p.id, 'once');
+    await idle(e);
+
+    // not available: falls back honestly
+    e = mkApp('dead');
+    e.send(e.rooms[0].id, '@codex hi');
+    await idle(e);
+    const notes = e.rooms[0].transcript.filter((m) => m.from === 'system').map((m) => m.text).join('|');
+    check('no app-server: says so and still answers the normal way', /interactive mode didn't start/.test(notes) && !!lastReply(e), notes);
+
+    e = mkApp('midcrash');
+    e.send(e.rooms[0].id, '@codex hi');
+    await idle(e);
+    check('crash mid-task is reported, not hung', e.rooms[0].transcript.some((m) => m.from === 'system' && m.kind === 'error'));
+
+    // only the builder gets this; other agents and chat-only rooms are untouched
+    e = mkApp('cmd');
+    check('claude is not interactive (no driver yet)', e._interactiveFor(e.rooms[0], 'claude') === null);
+    e.updateRoom(e.rooms[0].id, { access: 'chat' });
+    check('chat-only rooms never use it', e._interactiveFor(e.rooms[0], 'codex') === null);
+    e.updateRoom(e.rooms[0].id, { approval: 'bogus' });
+    check('bad level ignored', e.rooms[0].approval === 'ask');
+    e.flush();
+    check('level survives restart', new Engine(e.dir).rooms[0].approval === 'ask');
+    delete process.env.FAKE_APP;
+    delete process.env.FAKE_APP_LOG;
+  }
+
   console.log('context trimming');
   {
     const e = mk({ contextMessages: 5, contextChars: 2000 });
