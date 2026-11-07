@@ -23,7 +23,7 @@ function check(name, cond, extra) {
 function fakeConfig(extra = {}) {
   const agents = {};
   for (const id of ['claude', 'codex', 'grok']) {
-    agents[id] = { command: process.execPath, args: [FAKE, id], input: 'stdin', enabled: true, probe: { version: [FAKE, id, '--version'], mcp: [FAKE, id, 'mcp', 'list'] } };
+    agents[id] = { driver: '', command: process.execPath, args: [FAKE, id], input: 'stdin', enabled: true, probe: { version: [FAKE, id, '--version'], mcp: [FAKE, id, 'mcp', 'list'] } };
   }
   return { agents, settings: { timeoutSec: 20, maxAutoRuns: 6, autoHandoff: true, ...extra } };
 }
@@ -989,6 +989,188 @@ const alive = (pid) => {
     check('level survives restart', new Engine(e.dir).rooms[0].approval === 'ask');
     delete process.env.FAKE_APP;
     delete process.env.FAKE_APP_LOG;
+  }
+
+  console.log('permission cards (grok, over ACP)');
+  {
+    const ACP = path.join(__dirname, 'fake-acp.js');
+    const mkAcp = (mode) => {
+      const logf = path.join(os.tmpdir(), 'huddle-acplog-' + process.pid + '-' + Math.random().toString(36).slice(2));
+      process.env.FAKE_ACP = mode;
+      process.env.FAKE_ACP_LOG = logf;
+      const e = mk({}, (cfg) => {
+        cfg.agents.grok.driver = 'grok-acp';
+        cfg.agents.grok.driverArgs = [ACP];
+      });
+      e.logf = logf;
+      e.updateRoom(e.rooms[0].id, { builder: 'grok', access: 'run', approval: 'ask' });
+      return e;
+    };
+    const calls = (e) => fs.readFileSync(e.logf, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+    const waitPerm = async (e) => {
+      const t0 = Date.now();
+      while (!e.getPermissions().length) {
+        if (Date.now() - t0 > 8000) throw new Error('no card');
+        await sleep(25);
+      }
+      return e.getPermissions()[0];
+    };
+    const reply = (e) => e.rooms[0].transcript.filter((m) => m.from === 'grok').pop();
+
+    let e = mkAcp('cmd');
+    e.send(e.rooms[0].id, '@grok install sharp');
+    let p = await waitPerm(e);
+    check('grok card shows the command', p.kind === 'command' && p.detail === 'npm install sharp' && p.agent === 'grok', p);
+    check('speaks JSON-RPC 2.0, picks the logged-in method, advertises no fs/terminal', calls(e).every((c) => c.v2) && calls(e).find((c) => c.method === 'authenticate').params.methodId === 'cached_token' && JSON.stringify(calls(e)[0].params.clientCapabilities) === '{}', calls(e)[0]);
+    check('session starts in the room folder', /workspace/.test(calls(e).find((c) => c.method === 'session/new').params.cwd));
+    e.answerPermission(p.id, 'once');
+    await idle(e);
+    check('allow once picks the allow_once option', /chose: a1/.test(reply(e).text), reply(e));
+    check('activity shows what it was doing', e.getActivity(e.rooms[0].id).some((a) => a.kind === 'did' && /npm install sharp/.test(a.text)));
+
+    e = mkAcp('cmd');
+    e.send(e.rooms[0].id, '@grok install');
+    p = await waitPerm(e);
+    e.answerPermission(p.id, 'deny');
+    await idle(e);
+    check('deny picks the reject option', /chose: r1/.test(reply(e).text), reply(e));
+
+    e = mkAcp('cmd');
+    e.updateRoom(e.rooms[0].id, { approval: 'chat' });
+    e.send(e.rooms[0].id, '@grok install');
+    p = await waitPerm(e);
+    check('chat level offers remember', p.canRemember === true);
+    e.answerPermission(p.id, 'chat');
+    await idle(e);
+    check('remember picks allow_always', /chose: a2/.test(reply(e).text), reply(e));
+    e.send(e.rooms[0].id, '@grok again');
+    await idle(e);
+    check('and the next one needs no card', e.getPermissions().length === 0 && /chose: a1|chose: a2/.test(reply(e).text), reply(e));
+
+    e = mkAcp('edit');
+    e.updateRoom(e.rooms[0].id, { approval: 'folder' });
+    e.send(e.rooms[0].id, '@grok edit');
+    await idle(e);
+    check('folder level: file edits go through without a card', e.getPermissions().length === 0 && /chose: a1/.test(reply(e).text), reply(e));
+    e = mkAcp('cmd');
+    e.updateRoom(e.rooms[0].id, { approval: 'folder' });
+    e.send(e.rooms[0].id, '@grok install');
+    p = await waitPerm(e);
+    check('folder level still asks about commands (no sandbox to lean on)', p.kind === 'command');
+    e.stop();
+    await idle(e);
+
+    e = mkAcp('cmd');
+    e.updateRoom(e.rooms[0].id, { approval: 'auto' });
+    e.send(e.rooms[0].id, '@grok install');
+    await idle(e);
+    check('auto level: everything allowed, logged', e.getPermissions().length === 0 && /chose: a1/.test(reply(e).text) && e.getActivity(e.rooms[0].id).some((a) => a.kind === 'allowed' && /automatically/.test(a.text)));
+
+    e = mkAcp('cmd');
+    e.updateRoom(e.rooms[0].id, { access: 'edit' });
+    e.send(e.rooms[0].id, '@grok install');
+    await idle(e);
+    check('edit-only room refuses commands', /chose: r1/.test(reply(e).text) && e.getPermissions().length === 0);
+
+    e = mkAcp('cmd');
+    e.send(e.rooms[0].id, '@grok install');
+    await waitPerm(e);
+    e.stop(e.rooms[0].id);
+    await idle(e);
+    check('stop clears the card', e.getPermissions().length === 0 && !reply(e));
+
+    e = mkAcp('dead');
+    e.send(e.rooms[0].id, '@grok hi');
+    await idle(e);
+    check('no ACP: says so, answers the normal way', /interactive mode didn't start/.test(e.rooms[0].transcript.filter((m) => m.from === 'system').map((m) => m.text).join('|')) && !!reply(e));
+    delete process.env.FAKE_ACP;
+    delete process.env.FAKE_ACP_LOG;
+  }
+
+  console.log('permission cards (claude, over hooks)');
+  {
+    const FC = path.join(__dirname, 'fake-claude-hooks.js');
+    const mkC = (tools) => {
+      process.env.FAKE_TOOLS = tools;
+      const e = mk({}, (cfg) => {
+        cfg.agents.claude.driver = 'claude-hooks';
+        cfg.agents.claude.args = [FC];
+      });
+      e.updateRoom(e.rooms[0].id, { builder: 'claude', access: 'run', approval: 'ask' });
+      return e;
+    };
+    const waitPerm = async (e, n = 1) => {
+      const t0 = Date.now();
+      while (e.getPermissions().length < n) {
+        if (Date.now() - t0 > 8000) throw new Error('no card');
+        await sleep(25);
+      }
+      return e.getPermissions();
+    };
+    const reply = (e) => e.rooms[0].transcript.filter((m) => m.from === 'claude').pop();
+
+    let e = mkC('Read:/a,Bash:npm test,Write:/work/a.txt');
+    e.send(e.rooms[0].id, '@claude build it');
+    let p = (await waitPerm(e))[0];
+    check('claude card shows the command', p.kind === 'command' && p.detail === 'npm test' && p.agent === 'claude', p);
+    check('headless clock is paused and status says waiting', /waiting/.test(JSON.stringify(e._status().doing)));
+    e.answerPermission(p.id, 'once');
+    p = (await waitPerm(e))[0];
+    check('then the file change asks too, listing the file', p.kind === 'files' && p.detail === '/work/a.txt', p);
+    e.answerPermission(p.id, 'deny');
+    await idle(e);
+    check('answers reach claude: read passes, bash allowed, write denied', /Read=pass Bash=allow Write=deny/.test(reply(e).text), reply(e));
+    check('launched in default permission mode with a hook file', /mode=default hook=yes/.test(reply(e).text), reply(e));
+    check('activity records both answers', e.getActivity(e.rooms[0].id).filter((a) => a.kind === 'allowed' || a.kind === 'denied').length === 2);
+
+    e = mkC('WebFetch:https://example.com');
+    e.send(e.rooms[0].id, '@claude read docs');
+    p = (await waitPerm(e))[0];
+    check('web use asks too', p.kind === 'web' && p.detail === 'https://example.com', p);
+    e.answerPermission(p.id, 'once');
+    await idle(e);
+
+    e = mkC('Bash:ls,Bash:pwd');
+    e.updateRoom(e.rooms[0].id, { approval: 'chat' });
+    e.send(e.rooms[0].id, '@claude go');
+    p = (await waitPerm(e))[0];
+    e.answerPermission(p.id, 'chat');
+    await idle(e);
+    check('allow for this chat covers the next command', /Bash=allow Bash=allow/.test(reply(e).text) && e.getPermissions().length === 0, reply(e));
+
+    e = mkC('Bash:ls,Write:/a');
+    e.updateRoom(e.rooms[0].id, { approval: 'folder' });
+    e.send(e.rooms[0].id, '@claude go');
+    p = (await waitPerm(e))[0];
+    check('folder: acceptEdits mode, commands still ask', p.kind === 'command');
+    e.answerPermission(p.id, 'once');
+    await idle(e);
+    check('folder: file edit needed no card', /mode=acceptEdits/.test(reply(e).text) && /Write=allow/.test(reply(e).text), reply(e));
+
+    e = mkC('Bash:ls');
+    e.updateRoom(e.rooms[0].id, { approval: 'auto' });
+    e.send(e.rooms[0].id, '@claude go');
+    await idle(e);
+    check('auto: bypass mode, no hook at all, no cards', /mode=bypassPermissions hook=no/.test(reply(e).text) && e.getPermissions().length === 0, reply(e));
+
+    e = mkC('Bash:ls,Write:/a');
+    e.updateRoom(e.rooms[0].id, { access: 'edit' });
+    e.send(e.rooms[0].id, '@claude go');
+    p = (await waitPerm(e))[0];
+    check('edit-only: command was refused without a card, the file asks', p.kind === 'files');
+    e.answerPermission(p.id, 'once');
+    await idle(e);
+    check('edit-only result', /Bash=deny Write=allow/.test(reply(e).text), reply(e));
+
+    e = mkC('Bash:ls');
+    e.send(e.rooms[0].id, '@claude go');
+    await waitPerm(e);
+    e.stop(e.rooms[0].id);
+    await idle(e);
+    check('stop clears the card and the hook is released', e.getPermissions().length === 0 && e.hookServer.runs.size === 0);
+    const bad = await new Promise((res) => require('http').request({ host: '127.0.0.1', port: e.hookServer.port, path: '/hook/deadbeef', method: 'POST' }, (r) => res(r.statusCode)).on('error', () => res(0)).end('{}'));
+    check('hook server rejects unknown tokens', bad === 404, bad);
+    delete process.env.FAKE_TOOLS;
   }
 
   console.log('context trimming');

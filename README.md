@@ -131,7 +131,15 @@ Pick how much you want to be asked in room settings → building → *when it ne
 
 The **activity** button in a room shows an honest record of what agents did, what they asked for, and what you allowed or denied. It lives in memory, not on disk. In an *edit files* room, commands are refused automatically and that refusal is logged.
 
-If a CLI doesn't support the interactive connection (an older Codex, say), Huddle says so in the room and runs it the normal way. Claude and Grok still use their normal edit/run flags for now; their interactive drivers come next.
+How each agent is connected:
+
+- **Codexa** talks to `codex app-server`.
+- **Claude** uses Claude Code's own documented *hooks*: for each run, Huddle gives it a temporary settings file with a hook that reports every command, file change and web lookup to a tiny server on `127.0.0.1` (random port, one-time token) before it happens. Reading and searching pass straight through. It's the same `claude` you already logged into, nothing private or extra.
+- **Grok** talks to `grok agent stdio` (the Agent Client Protocol).
+
+Claude and Grok can't be sandboxed the way Codex can, so for them *run automatically inside this folder* means file edits go through without asking, but commands and web use still ask. Only *run everything automatically* skips the questions.
+
+If a CLI can't start its interactive connection (an older version, say), Huddle says so in the room and runs it the normal way with its usual edit/run flags.
 
 ## tools panel (what each agent can actually do)
 

@@ -22,6 +22,9 @@ const MIME = {
 const { SkillStore, candidateSources } = require('./skills');
 const caps = require('./capabilities');
 const codexDriver = require('./drivers/codex-appserver');
+const grokDriver = require('./drivers/grok-acp');
+const claudeHooks = require('./drivers/claude-hooks');
+const DRIVERS = ['codex-appserver', 'grok-acp', 'claude-hooks'];
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -56,6 +59,8 @@ const DEFAULTS = {
       // edit: file edits are applied automatically. run: also any shell command (git, npm, builds...).
       probe: { version: ['--version'], mcp: ['mcp', 'list'] },
       accessArgs: { edit: ['--permission-mode', 'acceptEdits'], run: ['--permission-mode', 'acceptEdits', '--allowedTools', 'Bash'] },
+      // Permission cards via Claude Code's own PreToolUse hooks (see drivers/claude-hooks.js).
+      driver: 'claude-hooks',
     },
     codex: {
       label: 'Codexa',
@@ -85,6 +90,9 @@ const DEFAULTS = {
       // Grok has no documented "edit only" setting. Its build mode auto-approves every tool call, so it only offers 'run'.
       probe: { version: ['--version'], mcp: ['mcp', 'list'] },
       accessArgs: { run: ['--always-approve'] },
+      // Grok Build's Agent Client Protocol: `grok agent stdio` (see drivers/grok-acp.js).
+      driver: 'grok-acp',
+      driverArgs: ['--no-auto-update', 'agent', 'stdio'],
     },
   },
 };
@@ -419,7 +427,8 @@ class Engine extends EventEmitter {
           a.accessArgs = next;
         }
         if (trusted) {
-          if (p.driver === 'codex-appserver') a.driver = p.driver;
+          if (DRIVERS.includes(p.driver)) a.driver = p.driver;
+          else if (p.driver === '') delete a.driver; // tests and advanced setups: no interactive driver
           if (Array.isArray(p.driverArgs)) a.driverArgs = p.driverArgs.map(String).filter((x) => x.length);
         }
         if (trusted && p.probe && typeof p.probe === 'object') {
@@ -1244,12 +1253,13 @@ class Engine extends EventEmitter {
     const agent = this.config.agents[agentId];
     if (!room || !agent || !agent.driver) return null;
     if (room.builder !== agentId || (room.access || 'chat') === 'chat') return null;
-    return { level: APPROVAL_LEVELS.includes(room.approval) ? room.approval : 'ask', access: room.access };
+    return { level: APPROVAL_LEVELS.includes(room.approval) ? room.approval : 'ask', access: room.access, driver: agent.driver };
   }
 
   async _exec(room, agentId, entry, over) {
     const mode = over ? null : this._interactiveFor(room, agentId);
     if (!mode) return this._execHeadless(room, agentId, entry, over);
+    if (mode.driver === 'claude-hooks') return this._execClaudeHooks(room, agentId, entry, mode);
     const r = await this._execInteractive(room, agentId, entry, mode);
     if (!r.fallback) return r;
     if (process.env.HUDDLE_DEBUG) console.error('FALLBACK', JSON.stringify({ code: r.code, stderr: r.stderr, err: r.error && r.error.message }));
@@ -1274,14 +1284,15 @@ class Engine extends EventEmitter {
     const prompt = this._buildPrompt(room, agentId);
     this._log(room, agentId, 'info', `started (${mode.access === 'run' ? 'edit and run' : 'edit files'}, ${mode.level})`);
     const key = this._key(room.id, agentId);
-    const r = await codexDriver.run({
+    const drv = mode.driver === 'grok-acp' ? grokDriver : codexDriver;
+    const r = await drv.run({
       spawn: (args) => {
         const child = this._spawnCli(agent, resolved, args, cwd);
         entry.child = child;
         return child;
       },
       kill: killTree,
-      args: agent.driverArgs || ['app-server'],
+      args: agent.driverArgs || (mode.driver === 'grok-acp' ? ['agent', 'stdio'] : ['app-server']),
       cwd,
       prompt,
       level: mode.level,
@@ -1312,6 +1323,12 @@ class Engine extends EventEmitter {
       this._log(room, agentId, 'denied', `command blocked (room is edit-files only): ${info.detail}`);
       return Promise.resolve({ decision: 'deny' });
     }
+    // Claude and Grok have no sandbox, so "folder" auto-allows file edits but still asks about commands and the web;
+    // "auto" allows everything. (Codex enforces both in its own sandbox before asking.)
+    if (mode.level === 'auto' || (mode.level === 'folder' && kind === 'files')) {
+      this._log(room, agentId, 'allowed', `${info.title.replace('wants to ', '')}: ${info.detail} (${mode.level === 'auto' ? 'run everything automatically' : 'edits are automatic in this folder'})`);
+      return Promise.resolve({ decision: 'allow' });
+    }
     if (mode.level === 'chat' && this.grants.has(room.id) && this.grants.get(room.id).has(kind)) {
       this._log(room, agentId, 'allowed', `${info.title.replace('wants to ', '')}: ${info.detail} (allowed for this chat)`);
       return Promise.resolve({ decision: 'allow', forSession: true });
@@ -1337,6 +1354,52 @@ class Engine extends EventEmitter {
       this.emit('permissions', this.getPermissions());
       this._emitStatus();
     });
+  }
+
+  _isWaiting(roomId, agentId) {
+    for (const p of this.perms.values()) if (p.room === roomId && p.agent === agentId) return true;
+    return false;
+  }
+
+  // Claude: normal headless run, plus a per-run hook file so every command / file change / web use comes to us first.
+  async _execClaudeHooks(room, agentId, entry, mode) {
+    const key = this._key(room.id, agentId);
+    const flag = mode.level === 'auto' ? 'bypassPermissions' : mode.level === 'folder' ? 'acceptEdits' : 'default';
+    const args = ['--permission-mode', flag];
+    let reg = null;
+    let file = null;
+    if (mode.level !== 'auto') {
+      try {
+        if (!this.hookServer) this.hookServer = new claudeHooks.HookServer();
+        await this.hookServer.start();
+        reg = this.hookServer.register(async (tool, input) => {
+          const info = claudeHooks.toolInfo(tool, input);
+          this.doing.set(key, 'waiting for your answer');
+          this._emitStatus();
+          try {
+            const ans = await this._askPermission(room, agentId, mode, info);
+            return { allow: ans.decision === 'allow', reason: ans.decision === 'allow' ? '' : 'the person said no in AI Huddle' };
+          } finally {
+            this.doing.delete(key);
+            this._emitStatus();
+          }
+        });
+        file = path.join(os.tmpdir(), `huddle-hooks-${process.pid}-${Date.now()}.json`);
+        fs.writeFileSync(file, JSON.stringify(claudeHooks.settingsFor(reg.url, 3600)), 'utf8');
+        args.push('--settings', file);
+      } catch (e) {
+        this._log(room, agentId, 'info', `permission hook couldn't start (${e.message})`);
+        this._note(room, `I couldn't set up permission cards for ${this.config.agents[agentId].label} (${e.message}), so it ran with its normal edit/run flags this time.`, 'error');
+        return this._execHeadless(room, agentId, entry, undefined);
+      }
+    }
+    this._log(room, agentId, 'info', `started (${mode.access === 'run' ? 'edit and run' : 'edit files'}, ${mode.level})`);
+    try {
+      return await this._execHeadless(room, agentId, entry, undefined, { args });
+    } finally {
+      if (reg) reg.release();
+      if (file) fs.unlink(file, () => {});
+    }
   }
 
   getPermissions() {
@@ -1391,13 +1454,14 @@ class Engine extends EventEmitter {
   }
 
   // over (optional): {prompt, cwd, timeoutMs}. Used for health tests, which run outside any room and with no build flags.
-  async _execHeadless(room, agentId, entry, over) {
+  // extra (optional): {args} flags added in place of the room's accessArgs (used by the Claude hook driver)
+  async _execHeadless(room, agentId, entry, over, extra) {
     const agent = this.config.agents[agentId];
     const S = this.config.settings;
     const cwd = over && over.cwd ? over.cwd : this.workDir(room.id);
 
     let args = (agent.args || []).slice();
-    const acc = over ? { args: [] } : this._accessFor(room, agentId);
+    const acc = extra ? { args: extra.args || [] } : over ? { args: [] } : this._accessFor(room, agentId);
     if (acc.args.length) {
       // goes after a leading subcommand (codex "exec"), otherwise first
       const at = args.length && !String(args[0]).startsWith('-') ? 1 : 0;
@@ -1463,10 +1527,16 @@ class Engine extends EventEmitter {
       }
       entry.child = child;
 
-      timer = setTimeout(() => {
-        timedOut = true;
-        killTree(child);
-      }, over && over.timeoutMs ? over.timeoutMs : S.timeoutSec * 1000);
+      const limit = over && over.timeoutMs ? over.timeoutMs : S.timeoutSec * 1000;
+      const arm = () => {
+        timer = setTimeout(() => {
+          // time spent waiting on your answer to a permission card doesn't count
+          if (room && this._isWaiting(room.id, agentId)) return arm();
+          timedOut = true;
+          killTree(child);
+        }, limit);
+      };
+      arm();
 
       child.stdout.setEncoding('utf8');
       child.stderr.setEncoding('utf8');
