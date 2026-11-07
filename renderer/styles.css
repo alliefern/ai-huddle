@@ -1874,7 +1874,8 @@ body {
   color: var(--ink);
 }
 
-.build-warn {
+.build-warn,
+.appr-warn {
   margin-top: 8px;
 }
 
@@ -1927,4 +1928,118 @@ body {
   border-radius: 50%;
   background: var(--pink);
   border: 2px solid var(--ink);
+}
+
+/* permission cards */
+.build-tag.danger {
+  display: inline-block;
+  padding: 3px 10px;
+  border: 2px solid var(--ink);
+  border-radius: 999px;
+  background: var(--pink);
+  color: var(--on-pink);
+}
+
+.danger-text {
+  font-weight: 700;
+  border-left: 4px solid var(--pink);
+  padding-left: 10px;
+}
+
+.perm-dock {
+  padding: 0 26px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.perm-card {
+  background: var(--card);
+  color: var(--ink);
+  border: 2px solid var(--ink);
+  border-left: 10px solid var(--c, var(--pink));
+  border-radius: 14px;
+  padding: 12px 14px;
+  box-shadow: 3px 3px 0 var(--ink);
+}
+
+.perm-title {
+  font-weight: 800;
+  font-size: 14px;
+}
+
+.perm-detail {
+  margin: 8px 0 4px;
+  padding: 8px 10px;
+  background: var(--sand);
+  color: var(--ink);
+  border-radius: 8px;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 140px;
+  overflow: auto;
+}
+
+.perm-meta,
+.perm-other {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.perm-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.perm-other {
+  font-weight: 700;
+}
+
+/* activity sheet */
+.act-row {
+  display: grid;
+  grid-template-columns: auto auto auto 1fr;
+  gap: 10px;
+  align-items: baseline;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--ink);
+  font-size: 12px;
+}
+
+.act-time,
+.act-who {
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.act-kind {
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 1px 8px;
+  border: 1.5px solid var(--ink);
+  border-radius: 999px;
+  background: var(--card);
+}
+
+.act-allowed .act-kind {
+  background: var(--chart);
+  color: var(--on-chart);
+}
+
+.act-denied .act-kind,
+.act-asked .act-kind {
+  background: var(--pink);
+  color: var(--on-pink);
+}
+
+.act-text {
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, Consolas, monospace;
 }

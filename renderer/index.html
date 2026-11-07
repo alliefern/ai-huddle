@@ -56,6 +56,7 @@
             </label>
             <button id="stop" class="btn danger" hidden>stop</button>
             <button id="room-settings" class="btn ghost" title="rename this room, set the topic, or choose who's in it">room</button>
+            <button id="activity-btn" class="btn ghost" title="what the agents did, asked for, and were allowed or denied in this room">activity</button>
             <button id="tools-btn" class="btn ghost" title="see what each agent can actually do on this computer">tools</button>
             <button id="export" class="btn ghost" title="save this room as Markdown">export</button>
             <button id="clear" class="btn ghost" title="wipe this room's history">clear</button>
@@ -66,6 +67,7 @@
 
         <main class="messages" id="messages" aria-live="polite"></main>
         <div class="typing" id="typing" hidden></div>
+        <div class="perm-dock" id="perm-dock" hidden aria-live="assertive"></div>
 
         <footer class="composer" id="composer">
           <div class="slash" id="slash" hidden role="listbox"></div>
