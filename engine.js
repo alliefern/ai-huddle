@@ -2,11 +2,14 @@
 /*
  * Huddle engine: rooms, each with their own chat, and CLI agents that talk in them.
  *
- * - Every agent call is a fresh headless CLI run (claude -p, codex exec, grok -p ...).
+ * - Every agent call is a fresh CLI run (claude -p, codex exec, grok -p ...), or for a room's builder, a run through
+ *   that CLI's interactive connection (drivers/) so it can stop and ask before it acts.
  * - Each run gets that room's recent transcript, so agents "see" the room they're in.
  * - Rooms have a topic (given to the agents as a brief), members, and an optional folder.
  * - @mentions route messages. Agents can tag each other, capped by a per-message budget.
- * - Nothing here turns off any agent's permission prompts.
+ * - Chat-only rooms add no permission flags. A builder's permission flags only come from build mode, and the one level
+ *   that switches an agent's own permission checks off ("run everything automatically") has to be picked, and
+ *   confirmed, per room.
  *
  * Pure Node (no Electron), so it can be tested on its own.
  */
@@ -28,6 +31,7 @@ const DRIVERS = ['codex-appserver', 'grok-acp', 'claude-hooks'];
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const crypto = require('crypto');
 
 const IS_WIN = process.platform === 'win32';
 const HARD_CEILING = 200; // even with no cap, a bug or a stubborn pair of agents can't run all night
@@ -108,7 +112,7 @@ const TEAMS = {
 // per agent (agents.<id>.accessArgs), shown and editable in Settings. A missing level means that agent can't do it.
 const ACCESS_LEVELS = ['chat', 'edit', 'run'];
 // When a builder agent needs permission: ask every time, ask once per kind of action per chat, run freely inside the
-// room's folder, or run everything with no questions. Only agents with an interactive driver can honour these.
+// room's folder, or run everything with no questions. Only agents with an interactive driver can honor these.
 const APPROVAL_LEVELS = ['ask', 'chat', 'folder', 'auto'];
 const ACTIVITY_MAX = 300;
 const MEMORY_MAX_CHARS = 30000;
@@ -136,12 +140,39 @@ const stripAnsi = (s) =>
     .replace(/\u001b\][^\u0007]*\u0007/g, '')
     .replace(/\r\n/g, '\n');
 
-// cmd.exe quoting, only used for .cmd/.bat shims on Windows.
+// cmd.exe quoting, only used for .cmd/.bat shims on Windows. Inside double quotes cmd.exe leaves & | < > ^ ( ) alone,
+// so quoting covers those. A backslash does NOT escape a quote for cmd.exe, so embedded quotes are doubled, and
+// trailing backslashes are doubled so they can't swallow the closing quote. % and ! still expand inside quotes, which
+// is why shimArgProblem() refuses them before we ever get here.
 function winQuote(a) {
   a = String(a);
   if (a === '') return '""';
-  if (!/[\s"&|<>^()%!]/.test(a)) return a;
-  return '"' + a.replace(/"/g, '\\"') + '"';
+  if (!/[\s"&|<>^()%!,;=]/.test(a)) return a;
+  return '"' + a.replace(/"/g, '""').replace(/(\\+)$/, '$1$1') + '"';
+}
+
+// Characters cmd.exe can't be trusted to pass through to a .cmd shim untouched (variable expansion, line breaks,
+// quote games). Returns the first bad argument, or null.
+function shimArgProblem(args) {
+  for (const a of args) if (/["%!\r\n\u0000]/.test(String(a))) return String(a);
+  return null;
+}
+
+// path.resolve, but following symlinks for the part of the path that exists, so a link inside a folder can't make
+// somewhere else look like it's inside.
+function realish(p) {
+  const full = path.resolve(p);
+  let cur = full;
+  const rest = [];
+  for (;;) {
+    try {
+      return path.join(fs.realpathSync.native(cur), ...rest.reverse());
+    } catch (_) {}
+    const up = path.dirname(cur);
+    if (up === cur) return full;
+    rest.push(path.basename(cur));
+    cur = up;
+  }
 }
 
 function killTree(child) {
@@ -251,11 +282,39 @@ class Engine extends EventEmitter {
     this.usage = { day: '', counts: {} }; // runs started from AI Huddle today, per agent
     this.opts = opts;
     this.skills = new SkillStore(opts.skillsDir || path.join(storeDir, 'skills'));
+    // Per-run temp files (prompt files, Claude's hook settings) live here, in your own app data folder, not the shared
+    // system temp folder. Anything left behind by a crash is swept on the next start.
+    this.tmpDir = path.join(storeDir, 'tmp');
+    this._sweepTmp();
 
     this._load();
     if (opts.config) this._mergeConfig(opts.config, true);
     if (!this.rooms.length || this.rooms.every((r) => r.archived)) this._newRoom({ name: 'general' });
     for (const r of this.rooms) this._seedLastResponder(r);
+  }
+
+  // ---------- private temp files ----------
+
+  _sweepTmp() {
+    try {
+      fs.mkdirSync(this.tmpDir, { recursive: true, mode: 0o700 });
+      const cutoff = Date.now() - 60 * 60 * 1000; // older than an hour: no live run can still need it
+      for (const f of fs.readdirSync(this.tmpDir)) {
+        if (!/^huddle-/.test(f)) continue;
+        const p = path.join(this.tmpDir, f);
+        try {
+          if (fs.statSync(p).mtimeMs < cutoff) fs.unlinkSync(p);
+        } catch (_) {}
+      }
+    } catch (_) {}
+  }
+
+  // Writes a new file only this user can read. 'wx' refuses to follow or reuse anything already at that path.
+  _writeTmp(prefix, ext, content) {
+    fs.mkdirSync(this.tmpDir, { recursive: true, mode: 0o700 });
+    const file = path.join(this.tmpDir, `huddle-${prefix}-${process.pid}-${crypto.randomBytes(8).toString('hex')}${ext}`);
+    fs.writeFileSync(file, content, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+    return file;
   }
 
   // ---------- persistence ----------
@@ -535,17 +594,20 @@ class Engine extends EventEmitter {
     const room = this._room(id);
     if (!room || !p) return null;
     const ids = Object.keys(this.config.agents);
+    const before = { access: room.access, builder: room.builder, approval: room.approval, workDir: room.workDir };
     if ('name' in p) room.name = this._cleanName(p.name) || room.name;
     if ('topic' in p) room.topic = String(p.topic || '').slice(0, 2000);
     if ('workDir' in p) room.workDir = String(p.workDir || '').trim();
     if (Array.isArray(p.agents)) room.agents = p.agents.filter((a) => ids.includes(a));
     if (Array.isArray(p.skills)) room.skills = p.skills.map(String).slice(0, 40);
     if ('access' in p && ACCESS_LEVELS.includes(p.access)) room.access = p.access;
-    if ('approval' in p && APPROVAL_LEVELS.includes(p.approval)) {
-      if (p.approval !== room.approval) this.grants.delete(room.id);
-      room.approval = p.approval;
-    }
+    if ('approval' in p && APPROVAL_LEVELS.includes(p.approval)) room.approval = p.approval;
     if ('builder' in p) room.builder = ids.includes(p.builder) ? p.builder : '';
+    // "allow for this chat" was given to one builder, at one level, in one folder. Change any of those and it's gone.
+    if (['access', 'builder', 'approval', 'workDir'].some((k) => before[k] !== room[k])) this.grants.delete(room.id);
+    // A card that's still open was asked under the old builder/access/folder. Answering it now could allow something
+    // the new settings don't, so it's closed as a "no" and the agent is told why.
+    if (['access', 'builder', 'workDir'].some((k) => before[k] !== room[k])) this._denyRoomPermissions(room.id, "the room's build settings changed");
     if ('archived' in p) {
       const want = !!p.archived;
       if (want && !room.archived) {
@@ -984,6 +1046,9 @@ class Engine extends EventEmitter {
       Object.keys(this.queues)
         .filter((k) => k.startsWith(prefix))
         .forEach((k) => delete this.queues[k]);
+      // Mark first: a run that's still finding its CLI (no child yet) checks this before it spawns, and a permission
+      // request that arrives after this point is refused instead of opening a fresh card in a stopped room.
+      runs.forEach((e) => (e.stopped = true));
       this._denyRoomPermissions(rid, 'you stopped the room');
       runs.forEach((e) => {
         if (e.stop) e.stop();
@@ -1128,11 +1193,17 @@ class Engine extends EventEmitter {
     for (const id of toRun) this._enqueue(room, id, task.round);
   }
 
-  _accessRules(room, agentId) {
+  // chatOnly: this run was downgraded to chat (its permission cards couldn't be set up), whatever the room says.
+  _accessRules(room, agentId, chatOnly) {
     const S = this.config.settings;
     const acc = this._accessFor(room, agentId);
     const wd = this.workDir(room.id);
     const builder = room.builder && this.config.agents[room.builder];
+    if (chatOnly && acc.level !== 'chat') {
+      return [
+        `- You are the builder in this room, but this time you can't change files or run commands: AI Huddle couldn't set up the permission checks ${S.userName} asked for, so it's running you as chat only. Say what you would change and why, and ${S.userName} can decide.`,
+      ];
+    }
     if (acc.level === 'chat') {
       const rules = [`- This is a chat. Don't edit files or run commands unless ${S.userName} explicitly asked you to.`];
       if (builder && room.access !== 'chat' && room.builder !== agentId) {
@@ -1179,7 +1250,7 @@ class Engine extends EventEmitter {
     return { text: t, max: MEMORY_MAX_CHARS, trimmed: String(text || '').length > MEMORY_MAX_CHARS };
   }
 
-  _buildPrompt(room, agentId, maxChars) {
+  _buildPrompt(room, agentId, maxChars, chatOnly) {
     const S = this.config.settings;
     const me = this.config.agents[agentId];
     const members = this._members(room);
@@ -1225,7 +1296,7 @@ class Engine extends EventEmitter {
         ? `- To pass the conversation to another agent, @mention them by name (for example @${firstOther}). Only do this when you genuinely need their input. Don't tag someone just to thank or agree with them.`
         : `- You're the only agent in this room right now, so there's nobody to hand off to.`,
       `- Do not prefix your reply with your own name or a transcript label. Just write the message.`,
-      ...this._accessRules(room, agentId),
+      ...this._accessRules(room, agentId, chatOnly),
       `- Files attached to messages are saved in your working folder (shown as [Attached ...] with a path). Open them from that path if your tools can read files.`,
       `- To send ${S.userName} a file, either write a fenced block whose first line is \`\`\`file:name.ext containing the file's text, or save it in your working folder and put [[file: path]] on its own line. Huddle attaches it to your message.`,
       '',
@@ -1237,13 +1308,14 @@ class Engine extends EventEmitter {
     ].join('\n');
   }
 
-  // What this agent may do in this room: only the room's builder gets anything beyond chat, and only if the agent
-  // has flags for that level.
+  // What this agent may do in this room: only the room's builder gets anything beyond chat. An agent with an
+  // interactive driver can build at any level (its permission cards do the gating); one without needs flags for it.
   _accessFor(room, agentId) {
     const agent = this.config.agents[agentId];
     const level = room.access || 'chat';
     if (level === 'chat' || room.builder !== agentId) return { level: 'chat', args: [], unsupported: false };
     const args = (agent.accessArgs && agent.accessArgs[level]) || null;
+    if (agent.driver) return { level, args: args ? args.slice() : [], unsupported: false };
     if (!args || !args.length) return { level: 'chat', args: [], unsupported: true, wanted: level };
     return { level, args: args.slice(), unsupported: false };
   }
@@ -1259,18 +1331,50 @@ class Engine extends EventEmitter {
   async _exec(room, agentId, entry, over) {
     const mode = over ? null : this._interactiveFor(room, agentId);
     if (!mode) return this._execHeadless(room, agentId, entry, over);
-    if (mode.driver === 'claude-hooks') return this._execClaudeHooks(room, agentId, entry, mode);
-    const r = await this._execInteractive(room, agentId, entry, mode);
-    if (!r.fallback) return r;
-    if (process.env.HUDDLE_DEBUG) console.error('FALLBACK', JSON.stringify({ code: r.code, stderr: r.stderr, err: r.error && r.error.message }));
-    this._log(room, agentId, 'info', `couldn't use the interactive connection${r.error ? ' (' + r.error.message + ')' : ''}; ran the normal way instead`);
-    this._note(room, `${this.config.agents[agentId].label}'s interactive mode didn't start (usually an older version of the CLI), so I ran it the normal way. there are no permission cards this time, and your edit/run setting for it uses its normal flags.`, 'error');
-    return this._execHeadless(room, agentId, entry, over);
+    try {
+      if (mode.driver === 'claude-hooks') return await this._execClaudeHooks(room, agentId, entry, mode);
+      const r = await this._execInteractive(room, agentId, entry, mode);
+      if (!r.fallback || entry.stopped) return r;
+      if (process.env.HUDDLE_DEBUG) console.error('FALLBACK', JSON.stringify({ code: r.code, stderr: r.stderr, err: r.error && r.error.message }));
+      const label = this.config.agents[agentId].label;
+      return await this._fallback(room, agentId, entry, mode, `${label}'s interactive mode didn't start${r.error ? ' (' + r.error.message + ')' : ''}`);
+    } finally {
+      // Whatever happened, a card from this run can't be answered any more: the agent behind it is gone.
+      this._closeRunPermissions(entry);
+    }
   }
 
+  // The interactive connection (or Claude's hook) couldn't be set up, so nothing can stop and ask you. The agent's normal
+  // edit/run flags are only used if you already chose "run everything automatically". At any other level this run is
+  // chat only, because quietly swapping "ask me" for "don't ask me" is exactly what the levels promise not to do.
+  _fallback(room, agentId, entry, mode, why) {
+    const acc = this._accessFor(room, agentId);
+    if (mode.level === 'auto' && acc.args.length) {
+      this._log(room, agentId, 'info', `${why}; ran with its normal ${acc.level} flags (you picked run everything automatically)`);
+      this._note(room, `${why}, so there are no permission cards this time. you picked "run everything automatically", so I ran it the normal way, with its ${acc.level === 'run' ? 'edit and run' : 'edit'} flags from settings.`, 'error');
+      return this._execHeadless(room, agentId, entry, undefined, { args: acc.args });
+    }
+    const instead =
+      mode.level === 'auto'
+        ? `it has no "${acc.level === 'run' ? 'edit and run' : 'edit files'}" flags in settings to fall back on`
+        : "you asked to be asked first, and I won't let it change things without asking";
+    this._log(room, agentId, 'info', `${why}; ran as chat only (${instead})`);
+    this._note(room, `${why}, so I can't show you permission cards. ${instead}, so it ran as chat only this time. updating that CLI usually fixes this.`, 'error');
+    return this._execHeadless(room, agentId, entry, undefined, { args: [], chatOnly: true });
+  }
+
+  // Starts a CLI. A .cmd/.bat shim has to go through cmd.exe, so its arguments are checked and quoted for that first.
   _spawnCli(agent, resolved, args, cwd) {
     const shim = IS_WIN && /\.(cmd|bat)$/i.test(resolved);
-    if (shim) return spawn([resolved, ...args].map(winQuote).join(' '), [], { cwd, shell: true, windowsHide: true, env: process.env });
+    if (shim) {
+      const bad = shimArgProblem([resolved, ...args]);
+      if (bad) {
+        throw new Error(
+          `${path.basename(resolved)} is a .cmd shim, and Windows can't safely hand it an argument with " % ! or a line break in it (${bad.slice(0, 80)}). remove that from the agent's settings, or point the command at the CLI's .exe.`
+        );
+      }
+      return spawn([resolved, ...args].map(winQuote).join(' '), [], { cwd, shell: true, windowsHide: true, env: process.env });
+    }
     if (IS_WIN) return spawn(resolved, args, { cwd, windowsHide: true, env: process.env });
     return spawn(resolved, args, { cwd, env: process.env, detached: true });
   }
@@ -1281,6 +1385,7 @@ class Engine extends EventEmitter {
     const cwd = this.workDir(room.id);
     const resolved = await resolveCommand(agent.command);
     if (!resolved) return { error: Object.assign(new Error('not found'), { code: 'ENOENT' }), stdout: '', stderr: '' };
+    if (entry.stopped) return { stopped: true, stdout: '', stderr: '' }; // stopped while we were looking for the CLI
     const prompt = this._buildPrompt(room, agentId);
     this._log(room, agentId, 'info', `started (${mode.access === 'run' ? 'edit and run' : 'edit files'}, ${mode.level})`);
     const key = this._key(room.id, agentId);
@@ -1296,6 +1401,7 @@ class Engine extends EventEmitter {
       cwd,
       prompt,
       level: mode.level,
+      access: mode.access,
       timeoutMs: S.timeoutSec * 1000,
       version: this.opts.appVersion || '',
       entry,
@@ -1309,32 +1415,49 @@ class Engine extends EventEmitter {
         else this.doing.delete(key);
         this._emitStatus();
       },
-      ask: (info) => this._askPermission(room, agentId, mode, info),
+      ask: (info) => this._askPermission(room, agentId, mode, info, { entry, cwd }),
     });
     this.doing.delete(key);
     return r;
   }
 
-  // A permission request from an agent. Resolves {decision:'allow'|'deny', forSession}.
-  _askPermission(room, agentId, mode, info) {
+  // True only if every path is known and, after following symlinks, sits inside base.
+  _pathsInside(base, paths) {
+    if (!Array.isArray(paths) || !paths.length) return false;
+    const root = realish(base);
+    return paths.every((p) => typeof p === 'string' && p.trim() !== '' && this._inside(root, realish(path.resolve(base, p))));
+  }
+
+  // A permission request from an agent. Resolves {decision:'allow'|'deny', forSession, why}.
+  // ctx: {entry (the run asking), cwd (the room's folder for this run), signal (aborts when the asker stops waiting)}
+  _askPermission(room, agentId, mode, info, ctx = {}) {
     const agent = this.config.agents[agentId];
     const kind = info.kind || 'other';
-    if (kind === 'command' && mode.access !== 'run') {
-      this._log(room, agentId, 'denied', `command blocked (room is edit-files only): ${info.detail}`);
-      return Promise.resolve({ decision: 'deny' });
-    }
-    // Claude and Grok have no sandbox, so "folder" auto-allows file edits but still asks about commands and the web;
-    // "auto" allows everything. (Codex enforces both in its own sandbox before asking.)
-    if (mode.level === 'auto' || (mode.level === 'folder' && kind === 'files')) {
-      this._log(room, agentId, 'allowed', `${info.title.replace('wants to ', '')}: ${info.detail} (${mode.level === 'auto' ? 'run everything automatically' : 'edits are automatic in this folder'})`);
-      return Promise.resolve({ decision: 'allow' });
-    }
-    if (mode.level === 'chat' && this.grants.has(room.id) && this.grants.get(room.id).has(kind)) {
-      this._log(room, agentId, 'allowed', `${info.title.replace('wants to ', '')}: ${info.detail} (allowed for this chat)`);
-      return Promise.resolve({ decision: 'allow', forSession: true });
-    }
+    const what = `${String(info.title || '').replace('wants to ', '')}: ${info.detail}`;
+    const deny = (why) => {
+      this._log(room, agentId, 'denied', `${what} (${why})`);
+      return Promise.resolve({ decision: 'deny', why });
+    };
+    const allow = (why, forSession) => {
+      this._log(room, agentId, 'allowed', `${what} (${why})`);
+      return Promise.resolve({ decision: 'allow', forSession: !!forSession });
+    };
+    if (ctx.entry && ctx.entry.stopped) return deny('you stopped the room');
+    if (kind === 'command' && mode.access !== 'run') return deny('this room is edit files only, so commands are refused');
+    const cwd = ctx.cwd || this.workDir(room.id);
+    const inFolder = kind === 'files' && this._pathsInside(cwd, info.paths);
+    if (mode.level === 'auto') return allow('you picked run everything automatically');
+    // Claude and Grok have no sandbox, so "folder" means: file changes Huddle can see are inside the room's folder go
+    // through; anything else (other paths, commands, the web, connectors) still asks. Codex enforces it in its own
+    // sandbox and only asks when it wants out.
+    if (mode.level === 'folder' && inFolder) return allow("inside this room's folder, which is automatic at this level");
+    const g = this.grants.get(room.id);
+    if (mode.level === 'chat' && g && g.has(kind) && (kind !== 'files' || inFolder)) return allow('allowed for this chat', true);
+    if (ctx.signal && ctx.signal.aborted) return deny('the agent stopped waiting before it could be asked');
+
     return new Promise((resolve) => {
       const id = 'p' + this.nextPermId++;
+      const outside = kind === 'files' && !inFolder;
       const perm = {
         id,
         room: room.id,
@@ -1345,12 +1468,17 @@ class Engine extends EventEmitter {
         detail: info.detail,
         cwd: info.cwd || '',
         reason: info.reason || '',
-        canRemember: mode.level === 'chat',
+        // a file change Huddle can't place inside the room's folder (another path, or no path given)
+        outside,
+        // "for this chat" never covers file changes outside the folder, so don't offer it on those
+        canRemember: mode.level === 'chat' && !outside,
         ts: Date.now(),
         resolve,
+        entry: ctx.entry || null,
       };
       this.perms.set(id, perm);
       this._log(room, agentId, 'asked', `${info.title}: ${info.detail}`);
+      if (ctx.signal) ctx.signal.addEventListener('abort', () => this._closePermission(id, 'the agent stopped waiting for an answer'), { once: true });
       this.emit('permissions', this.getPermissions());
       this._emitStatus();
     });
@@ -1361,36 +1489,46 @@ class Engine extends EventEmitter {
     return false;
   }
 
-  // Claude: normal headless run, plus a per-run hook file so every command / file change / web use comes to us first.
+  // Claude: normal headless run, plus a per-run hook file so every command / file change / web use / connector call
+  // comes to us first.
   async _execClaudeHooks(room, agentId, entry, mode) {
     const key = this._key(room.id, agentId);
-    const flag = mode.level === 'auto' ? 'bypassPermissions' : mode.level === 'folder' ? 'acceptEdits' : 'default';
+    const cwd = this.workDir(room.id);
+    const label = this.config.agents[agentId].label;
+    // "run everything automatically" in an edit-and-run room is the only combination with nothing left to check, so
+    // it's the only one that uses Claude's bypass mode and no hook. Everywhere else the hook stays on.
+    const hooked = !(mode.level === 'auto' && mode.access === 'run');
+    const flag = !hooked ? 'bypassPermissions' : mode.level === 'ask' || mode.level === 'chat' ? 'default' : 'acceptEdits';
     const args = ['--permission-mode', flag];
+    // Edit-only rooms also switch Bash off inside Claude itself, so a hook that never fires can't let a command through.
+    if (mode.access !== 'run') args.push('--disallowedTools', 'Bash');
     let reg = null;
     let file = null;
-    if (mode.level !== 'auto') {
+    let waiting = 0;
+    if (hooked) {
       try {
         if (!this.hookServer) this.hookServer = new claudeHooks.HookServer();
         await this.hookServer.start();
-        reg = this.hookServer.register(async (tool, input) => {
+        reg = this.hookServer.register(async (tool, input, _evt, signal) => {
           const info = claudeHooks.toolInfo(tool, input);
+          waiting++;
           this.doing.set(key, 'waiting for your answer');
           this._emitStatus();
           try {
-            const ans = await this._askPermission(room, agentId, mode, info);
-            return { allow: ans.decision === 'allow', reason: ans.decision === 'allow' ? '' : 'the person said no in AI Huddle' };
+            const ans = await this._askPermission(room, agentId, mode, info, { entry, cwd, signal });
+            if (ans.decision === 'allow') return { allow: true, reason: '' };
+            return { allow: false, reason: ans.why ? `AI Huddle refused: ${ans.why}` : 'the person said no in AI Huddle' };
           } finally {
-            this.doing.delete(key);
+            waiting--;
+            if (!waiting) this.doing.delete(key);
             this._emitStatus();
           }
         });
-        file = path.join(os.tmpdir(), `huddle-hooks-${process.pid}-${Date.now()}.json`);
-        fs.writeFileSync(file, JSON.stringify(claudeHooks.settingsFor(reg.url, 3600)), 'utf8');
+        file = this._writeTmp('hooks', '.json', JSON.stringify(claudeHooks.settingsFor(reg.url, 3600)));
         args.push('--settings', file);
       } catch (e) {
-        this._log(room, agentId, 'info', `permission hook couldn't start (${e.message})`);
-        this._note(room, `I couldn't set up permission cards for ${this.config.agents[agentId].label} (${e.message}), so it ran with its normal edit/run flags this time.`, 'error');
-        return this._execHeadless(room, agentId, entry, undefined);
+        if (reg) reg.release();
+        return this._fallback(room, agentId, entry, mode, `I couldn't set up permission cards for ${label} (${e.message})`);
       }
     }
     this._log(room, agentId, 'info', `started (${mode.access === 'run' ? 'edit and run' : 'edit files'}, ${mode.level})`);
@@ -1403,41 +1541,60 @@ class Engine extends EventEmitter {
   }
 
   getPermissions() {
-    return [...this.perms.values()].map(({ resolve, ...p }) => p);
+    return [...this.perms.values()].map(({ resolve, entry, ...p }) => p);
   }
 
   // choice: 'once' | 'chat' | 'deny'
   answerPermission(id, choice) {
     const p = this.perms.get(id);
-    if (!p) return false;
+    if (!p) return false; // already answered, closed, or never existed: answering twice does nothing
     this.perms.delete(id);
     const room = this._room(p.room);
     const allow = choice === 'once' || choice === 'chat';
-    if (choice === 'chat' && room) {
+    const remember = choice === 'chat' && p.canRemember;
+    if (remember && room) {
       if (!this.grants.has(room.id)) this.grants.set(room.id, new Set());
       this.grants.get(room.id).add(p.kind);
     }
     if (room) {
       const what = `${p.title.replace('wants to ', '')}: ${p.detail}`;
-      this._log(room, p.agent, allow ? 'allowed' : 'denied', choice === 'chat' ? `${what} (and the rest of this kind, this chat)` : what);
+      this._log(room, p.agent, allow ? 'allowed' : 'denied', remember ? `${what} (and the rest of this kind, this chat)` : what);
     }
-    p.resolve({ decision: allow ? 'allow' : 'deny', forSession: choice === 'chat' });
+    p.resolve({ decision: allow ? 'allow' : 'deny', forSession: remember, why: allow ? '' : 'the person said no' });
     this.emit('permissions', this.getPermissions());
     this._emitStatus();
     return true;
   }
 
-  _denyRoomPermissions(roomId, why) {
+  // Closes cards without an answer from you. Each is resolved as "no", logged with the real reason, and removed.
+  _closePerms(match, why, kind = 'denied') {
     let any = false;
     for (const [id, p] of [...this.perms]) {
-      if (p.room !== roomId) continue;
+      if (!match(p)) continue;
       this.perms.delete(id);
       any = true;
-      const room = this._room(roomId);
-      if (room) this._log(room, p.agent, 'denied', `${p.detail} (${why})`);
-      p.resolve({ decision: 'deny' });
+      const room = this._room(p.room);
+      if (room) this._log(room, p.agent, kind, `${p.title.replace('wants to ', '')}: ${p.detail} (${why})`);
+      p.resolve({ decision: 'deny', why });
     }
-    if (any) this.emit('permissions', this.getPermissions());
+    if (any) {
+      this.emit('permissions', this.getPermissions());
+      this._emitStatus();
+    }
+    return any;
+  }
+
+  _denyRoomPermissions(roomId, why) {
+    return this._closePerms((p) => p.room === roomId, why);
+  }
+
+  _closePermission(id, why) {
+    return this._closePerms((p) => p.id === id, `card closed without an answer: ${why}`, 'info');
+  }
+
+  _closeRunPermissions(entry) {
+    if (!entry) return false;
+    return this._closePerms((p) => p.entry === entry, 'card closed without an answer: the agent finished or quit first', 'info');
   }
 
   _log(room, agentId, kind, text) {
@@ -1454,7 +1611,8 @@ class Engine extends EventEmitter {
   }
 
   // over (optional): {prompt, cwd, timeoutMs}. Used for health tests, which run outside any room and with no build flags.
-  // extra (optional): {args} flags added in place of the room's accessArgs (used by the Claude hook driver)
+  // extra (optional): {args, chatOnly} flags used in place of the room's accessArgs (the Claude hook driver and the
+  // fallback use this). chatOnly also tells the agent, in the prompt, that it can't change anything this time.
   async _execHeadless(room, agentId, entry, over, extra) {
     const agent = this.config.agents[agentId];
     const S = this.config.settings;
@@ -1469,10 +1627,12 @@ class Engine extends EventEmitter {
     }
     const usesFile = agent.input === 'file' || args.some((a) => a.includes('{promptFile}'));
     const usesArg = agent.input === 'arg' || args.some((a) => a.includes('{prompt}'));
-    const prompt = over && over.prompt != null ? over.prompt : this._buildPrompt(room, agentId, usesArg ? ARG_MODE_MAX_CHARS : undefined);
+    const prompt =
+      over && over.prompt != null ? over.prompt : this._buildPrompt(room, agentId, usesArg ? ARG_MODE_MAX_CHARS : undefined, !!(extra && extra.chatOnly));
 
     const resolved = await resolveCommand(agent.command);
     if (!resolved) return { error: Object.assign(new Error('not found'), { code: 'ENOENT' }), stdout: '', stderr: '' };
+    if (entry && entry.stopped) return { stopped: true, stdout: '', stderr: '' }; // stopped while we were looking for the CLI
 
     const shim = IS_WIN && /\.(cmd|bat)$/i.test(resolved);
     if (shim && usesArg) {
@@ -1487,8 +1647,11 @@ class Engine extends EventEmitter {
 
     let promptFile = null;
     if (usesFile) {
-      promptFile = path.join(os.tmpdir(), `huddle-${process.pid}-${agentId}-${Date.now()}.txt`);
-      fs.writeFileSync(promptFile, prompt, 'utf8');
+      try {
+        promptFile = this._writeTmp(`prompt-${agentId}`, '.txt', prompt);
+      } catch (e) {
+        return { error: new Error("I couldn't write the prompt file: " + e.message), stdout: '', stderr: '' };
+      }
       args = args.map((a) => a.split('{promptFile}').join(promptFile));
     }
     if (usesArg) args = args.map((a) => a.split('{prompt}').join(prompt));
@@ -1510,18 +1673,7 @@ class Engine extends EventEmitter {
 
       let child;
       try {
-        if (shim) {
-          child = spawn([resolved, ...args].map(winQuote).join(' '), [], {
-            cwd,
-            shell: true,
-            windowsHide: true,
-            env: process.env,
-          });
-        } else if (IS_WIN) {
-          child = spawn(resolved, args, { cwd, windowsHide: true, env: process.env });
-        } else {
-          child = spawn(resolved, args, { cwd, env: process.env, detached: true });
-        }
+        child = this._spawnCli(agent, resolved, args, cwd);
       } catch (e) {
         return finish({ error: e });
       }
@@ -1558,7 +1710,7 @@ class Engine extends EventEmitter {
   // ---------- what can each agent actually do? ----------
 
   _capHelpers() {
-    return { IS_WIN, winQuote, killTree, resolveCommand, stripAnsi, mcpTimeoutMs: this.opts.probeTimeoutMs };
+    return { IS_WIN, winQuote, shimArgProblem, killTree, resolveCommand, stripAnsi, mcpTimeoutMs: this.opts.probeTimeoutMs };
   }
 
   _sharedSlugs() {
@@ -1670,4 +1822,4 @@ class Engine extends EventEmitter {
   }
 }
 
-module.exports = { Engine, DEFAULTS, TEAMS, ACCESS_LEVELS, MEMORY_MAX_CHARS, parseRepoUrl, stripAnsi, winQuote, resolveCommand };
+module.exports = { Engine, DEFAULTS, TEAMS, ACCESS_LEVELS, MEMORY_MAX_CHARS, parseRepoUrl, stripAnsi, winQuote, shimArgProblem, realish, resolveCommand };

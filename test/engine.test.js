@@ -3,7 +3,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { Engine, stripAnsi, winQuote, resolveCommand, parseRepoUrl, MEMORY_MAX_CHARS } = require('../engine');
+const { Engine, stripAnsi, winQuote, shimArgProblem, resolveCommand, parseRepoUrl, MEMORY_MAX_CHARS } = require('../engine');
 
 const FAKE = path.join(__dirname, 'fake-agent.js');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -879,7 +879,7 @@ const alive = (pid) => {
     let p = (await waitPerm(e))[0];
     check('a card appears with the command, folder and reason', p.kind === 'command' && p.detail === 'npm install sharp' && p.cwd === '/work' && p.reason === 'install a dependency' && p.agent === 'codex', p);
     check('status shows it is waiting on you', e._status().pending === 1 && /waiting/.test(JSON.stringify(e._status().doing)));
-    check('ask level: codex told to ask, sandboxed to the folder', thread(e).approvalPolicy === 'on-request' && thread(e).sandbox === 'workspace-write', thread(e));
+    check('ask level: codex told to ask about everything it does not treat as read-only, sandboxed to the folder', thread(e).approvalPolicy === 'untrusted' && thread(e).sandbox === 'workspace-write', thread(e));
     check('no remember button at the ask level', p.canRemember === false);
     e.answerPermission(p.id, 'once');
     await idle(e);
@@ -905,10 +905,10 @@ const alive = (pid) => {
     check('chat level offers "allow for this chat"', p.canRemember === true);
     e.answerPermission(p.id, 'chat');
     await idle(e);
-    check('second ask of the same kind is allowed without a card', /decisions: acceptForSession,acceptForSession/.test(lastReply(e).text), lastReply(e));
+    check('second ask of the same kind is allowed without a card (Huddle remembers it, Codex only ever gets a one-time yes)', /decisions: accept,accept\./.test(lastReply(e).text) && e.getPermissions().length === 0, lastReply(e));
     e.send(e.rooms[0].id, '@codex again');
     await idle(e);
-    check('the grant lasts for the chat', e.getPermissions().length === 0 && /acceptForSession,acceptForSession/.test(lastReply(e).text));
+    check('the grant lasts for the chat', e.getPermissions().length === 0 && /accept,accept\./.test(lastReply(e).text));
     e.updateRoom(e.rooms[0].id, { approval: 'ask' });
     check('changing level forgets grants', !e.grants.has(e.rooms[0].id));
 
@@ -930,7 +930,7 @@ const alive = (pid) => {
     e.updateRoom(e.rooms[0].id, { access: 'edit' });
     e.send(e.rooms[0].id, '@codex install');
     await idle(e);
-    check('edit-only room auto-denies commands, no card', e.getPermissions().length === 0 && /decline/.test(lastReply(e).text) && e.getActivity(e.rooms[0].id).some((a) => /edit-files only/.test(a.text)));
+    check('edit-only room auto-denies commands, no card', e.getPermissions().length === 0 && /decline/.test(lastReply(e).text) && e.getActivity(e.rooms[0].id).some((a) => /edit files only/.test(a.text)));
     e = mkApp('file');
     e.updateRoom(e.rooms[0].id, { access: 'edit' });
     e.send(e.rooms[0].id, '@codex write');
@@ -1042,7 +1042,7 @@ const alive = (pid) => {
     check('chat level offers remember', p.canRemember === true);
     e.answerPermission(p.id, 'chat');
     await idle(e);
-    check('remember picks allow_always', /chose: a2/.test(reply(e).text), reply(e));
+    check('remember is kept by Huddle; Grok gets allow_once, never allow_always', /chose: a1/.test(reply(e).text), reply(e));
     e.send(e.rooms[0].id, '@grok again');
     await idle(e);
     check('and the next one needs no card', e.getPermissions().length === 0 && /chose: a1|chose: a2/.test(reply(e).text), reply(e));
@@ -1138,7 +1138,7 @@ const alive = (pid) => {
     await idle(e);
     check('allow for this chat covers the next command', /Bash=allow Bash=allow/.test(reply(e).text) && e.getPermissions().length === 0, reply(e));
 
-    e = mkC('Bash:ls,Write:/a');
+    e = mkC('Bash:ls,Write:./a');
     e.updateRoom(e.rooms[0].id, { approval: 'folder' });
     e.send(e.rooms[0].id, '@claude go');
     p = (await waitPerm(e))[0];
@@ -1173,6 +1173,282 @@ const alive = (pid) => {
     delete process.env.FAKE_TOOLS;
   }
 
+  console.log('permission scope, consent and clean-up');
+  {
+    const http = require('http');
+    const APP = path.join(__dirname, 'fake-appserver.js');
+    const ACP = path.join(__dirname, 'fake-acp.js');
+    const FC = path.join(__dirname, 'fake-claude-hooks.js');
+    const logFile = (tag) => path.join(os.tmpdir(), `huddle-${tag}-${process.pid}-${Math.random().toString(36).slice(2)}`);
+    const readLog = (f) => (fs.existsSync(f) ? fs.readFileSync(f, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : []);
+    const waitPerm = async (e, n = 1) => {
+      const t0 = Date.now();
+      while (e.getPermissions().length < n) {
+        if (Date.now() - t0 > 8000) throw new Error('no card');
+        await sleep(25);
+      }
+      return e.getPermissions();
+    };
+    const replyOf = (e, who) => e.rooms[0].transcript.filter((m) => m.from === who).pop();
+    const notesOf = (e) => sysMsgs(e).map((m) => m.text).join('|');
+    const acts = (e) => e.getActivity(R(e)).map((a) => `${a.kind}: ${a.text}`).join('\n');
+    const mkCodex = (mode, room, mutate) => {
+      process.env.FAKE_APP = mode;
+      process.env.FAKE_APP_LOG = logFile('applog');
+      const e = mk({}, (cfg) => {
+        cfg.agents.codex.driver = 'codex-appserver';
+        cfg.agents.codex.driverArgs = [APP];
+        if (mutate) mutate(cfg);
+      });
+      e.logf = process.env.FAKE_APP_LOG;
+      e.updateRoom(R(e), Object.assign({ builder: 'codex', access: 'run', approval: 'ask' }, room));
+      return e;
+    };
+    const threadOf = (e) => readLog(e.logf).find((x) => x.method === 'thread/start').params;
+    const mkGrok = (mode, room) => {
+      process.env.FAKE_ACP = mode;
+      process.env.FAKE_ACP_LOG = logFile('acplog');
+      const e = mk({}, (cfg) => {
+        cfg.agents.grok.driver = 'grok-acp';
+        cfg.agents.grok.driverArgs = [ACP];
+      });
+      e.logf = process.env.FAKE_ACP_LOG;
+      e.updateRoom(R(e), Object.assign({ builder: 'grok', access: 'run', approval: 'ask' }, room));
+      return e;
+    };
+    const mkClaude = (tools, room) => {
+      process.env.FAKE_TOOLS = tools;
+      const e = mk({}, (cfg) => {
+        cfg.agents.claude.driver = 'claude-hooks';
+        cfg.agents.claude.args = [FC];
+      });
+      e.updateRoom(R(e), Object.assign({ builder: 'claude', access: 'run', approval: 'ask' }, room));
+      return e;
+    };
+
+    // --- "auto" never overrides "edit files only" ---
+    let e = mkCodex('cmd', { access: 'edit', approval: 'auto' });
+    e.send(R(e), '@codex install');
+    await idle(e);
+    check('codex, auto in an edit-only room: Codex still checks in, so commands can be refused', threadOf(e).approvalPolicy === 'untrusted' && threadOf(e).sandbox === 'workspace-write', threadOf(e));
+    check('codex, auto in an edit-only room: the command is refused with no card', /decline/.test(replyOf(e, 'codex').text) && e.getPermissions().length === 0, replyOf(e, 'codex'));
+
+    e = mkClaude('Bash:ls,Write:/etc/huddle-x', { access: 'edit', approval: 'auto' });
+    e.send(R(e), '@claude go');
+    await idle(e);
+    check('claude, auto in an edit-only room: hook stays on, Bash is switched off in Claude too, the command is refused', /mode=acceptEdits hook=yes disallowed=Bash Bash=deny Write=allow/.test(replyOf(e, 'claude').text) && e.getPermissions().length === 0, replyOf(e, 'claude'));
+    e = mkClaude('Bash:ls', { approval: 'auto' });
+    e.send(R(e), '@claude go');
+    await idle(e);
+    check('claude, auto in an edit-and-run room: bypass mode, no hook, nothing switched off', /mode=bypassPermissions hook=no disallowed=none/.test(replyOf(e, 'claude').text), replyOf(e, 'claude'));
+    e = mkClaude('Write:./a', { access: 'edit' });
+    e.send(R(e), '@claude go');
+    await waitPerm(e);
+    e.answerPermission(e.getPermissions()[0].id, 'once');
+    await idle(e);
+    check('claude, edit-only room at any level: Bash is switched off in Claude itself', /disallowed=Bash/.test(replyOf(e, 'claude').text), replyOf(e, 'claude'));
+
+    // --- "folder" means inside the folder ---
+    e = mkClaude('Write:/etc/huddle-x', { approval: 'folder' });
+    e.send(R(e), '@claude go');
+    let p = (await waitPerm(e))[0];
+    check('claude, folder level: a file outside the folder still asks, and the card says so', p.kind === 'files' && p.outside === true && p.detail === '/etc/huddle-x', p);
+    e.answerPermission(p.id, 'deny');
+    await idle(e);
+    check('claude, folder level: deny reaches Claude', /Write=deny/.test(replyOf(e, 'claude').text));
+
+    e = mkGrok('edit-outside', { approval: 'folder' });
+    e.send(R(e), '@grok edit');
+    p = (await waitPerm(e))[0];
+    check('grok, folder level: a file outside the folder still asks', p.kind === 'files' && p.outside === true && /\/etc\/logo\.svg/.test(p.detail), p);
+    e.answerPermission(p.id, 'deny');
+    await idle(e);
+    check('grok, folder level: the outside edit was refused', /chose: r1/.test(replyOf(e, 'grok').text), replyOf(e, 'grok'));
+
+    e = mkCodex('file-item', { access: 'edit', approval: 'folder' });
+    e.send(R(e), '@codex write notes');
+    await idle(e);
+    check('codex, folder level in an edit-only room: a change inside the folder goes through with no card', /decisions: accept\./.test(replyOf(e, 'codex').text) && e.getPermissions().length === 0, replyOf(e, 'codex'));
+    e = mkCodex('file-item', {});
+    e.send(R(e), '@codex write notes');
+    p = (await waitPerm(e))[0];
+    check('codex, ask level: the card names the file, read from the item Codex announced', p.kind === 'files' && /notes\.md$/.test(p.detail) && p.outside === false, p);
+    e.answerPermission(p.id, 'once');
+    await idle(e);
+
+    // --- "for this chat" never stretches past the folder ---
+    e = mkClaude('Write:./a,Write:/etc/huddle-b', { approval: 'chat' });
+    e.send(R(e), '@claude go');
+    p = (await waitPerm(e))[0];
+    check('chat level, inside the folder: remember is offered', p.canRemember === true && p.outside === false, p);
+    e.answerPermission(p.id, 'chat');
+    p = (await waitPerm(e))[0];
+    check('chat level: the remembered "files" grant does not cover a file outside the folder', p.outside === true && p.canRemember === false, p);
+    e.answerPermission(p.id, 'deny');
+    await idle(e);
+    check('chat level: inside allowed, outside refused', /Write=allow Write=deny/.test(replyOf(e, 'claude').text), replyOf(e, 'claude'));
+
+    // --- connectors and unreadable requests ---
+    e = mkClaude('mcp__github__create_issue:');
+    e.send(R(e), '@claude go');
+    p = (await waitPerm(e))[0];
+    check('claude connector (MCP) calls ask too', p.kind === 'connector' && p.detail === 'github / create_issue', p);
+    e.answerPermission(p.id, 'once');
+    await idle(e);
+    process.env.FAKE_RAW = '1';
+    e = mkClaude('Bash:ls', { approval: 'folder' });
+    e.send(R(e), '@claude go');
+    await idle(e);
+    delete process.env.FAKE_RAW;
+    check('a hook request with no tool name is refused, never guessed at', /Bash=deny/.test(replyOf(e, 'claude').text) && e.getPermissions().length === 0, replyOf(e, 'claude'));
+
+    // --- the hook server itself ---
+    e = mkClaude('Bash:ls');
+    e.send(R(e), '@claude go');
+    p = (await waitPerm(e))[0];
+    const hookFiles = () => fs.readdirSync(e.tmpDir).filter((f) => /^huddle-hooks-/.test(f));
+    check('the hook settings file lives in the app folder, not shared temp', hookFiles().length === 1);
+    if (process.platform !== 'win32') check('the hook settings file is readable by you only', (fs.statSync(path.join(e.tmpDir, hookFiles()[0])).mode & 0o777) === 0o600);
+    e.answerPermission(p.id, 'once');
+    await idle(e);
+    check('the hook settings file is deleted after the run', hookFiles().length === 0);
+    const srv = e.hookServer;
+    const post = (pathName, { host, body = '{}', headers = {} } = {}) =>
+      new Promise((res) => {
+        const req = http.request({ host: '127.0.0.1', port: srv.port, path: pathName, method: 'POST', headers: Object.assign({ Host: host || `127.0.0.1:${srv.port}` }, headers) }, (r) => {
+          let d = '';
+          r.on('data', (c) => (d += c));
+          r.on('end', () => res({ status: r.statusCode, body: d }));
+        });
+        req.on('error', () => res({ status: 0, body: '' }));
+        req.end(body);
+      });
+    const reg = srv.register(async () => ({ allow: true }));
+    const hookPath = new URL(reg.url).pathname;
+    check('hook server answers with the right Host', (await post(hookPath, { body: JSON.stringify({ tool_name: 'Bash', tool_input: {} }) })).status === 200);
+    check('hook server ignores another Host (DNS rebinding)', (await post(hookPath, { host: 'evil.example:' + srv.port, body: JSON.stringify({ tool_name: 'Bash' }) })).status === 404);
+    const big = await post(hookPath, { headers: { 'Content-Length': String(2 * 1024 * 1024) }, body: '' });
+    check('hook server refuses oversized requests', big.status === 413 || big.status === 0, big.status);
+    reg.release();
+    check('a released token is gone', (await post(hookPath, { body: JSON.stringify({ tool_name: 'Bash' }) })).status === 404);
+    let sawAbort = false;
+    const reg2 = srv.register((_t, _i, _e, signal) => new Promise(() => signal.addEventListener('abort', () => (sawAbort = true))));
+    await new Promise((res) => {
+      const req = http.request({ host: '127.0.0.1', port: srv.port, path: new URL(reg2.url).pathname, method: 'POST' });
+      req.on('error', () => {});
+      req.end(JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'ls' } }));
+      setTimeout(() => {
+        req.destroy();
+        setTimeout(res, 150);
+      }, 150);
+    });
+    reg2.release();
+    check('when Claude stops waiting, the hook server says so', sawAbort);
+
+    // --- cards never outlive the thing that asked ---
+    const ac = new AbortController();
+    const pending = e._askPermission(e.rooms[0], 'claude', { level: 'ask', access: 'run' }, { kind: 'command', title: 'wants to run a command', detail: 'ls', paths: [] }, { signal: ac.signal });
+    check('an abortable card opens', e.getPermissions().length === 1);
+    ac.abort();
+    check('aborting closes it as a no, with the reason logged', (await pending).decision === 'deny' && e.getPermissions().length === 0 && /stopped waiting/.test(acts(e)));
+    const stale = await e._askPermission(e.rooms[0], 'claude', { level: 'ask', access: 'run' }, { kind: 'command', title: 'wants to run a command', detail: 'ls', paths: [] }, { entry: { stopped: true } });
+    check('a request from a stopped run is refused without a card', stale.decision === 'deny' && e.getPermissions().length === 0);
+    check('the card list never leaks internals', e.getPermissions().every((x) => !('entry' in x) && !('resolve' in x)));
+
+    e = mkCodex('askexit', {});
+    e.send(R(e), '@codex install');
+    await waitPerm(e);
+    await idle(e);
+    check('agent quits with a card open: the card closes, the log says why', e.getPermissions().length === 0 && /card closed without an answer/.test(acts(e)), acts(e));
+    check('and nothing thinks it is still waiting', !e._isWaiting(R(e), 'codex'));
+
+    // --- settings changes ---
+    e = mkCodex('cmd', { approval: 'chat' });
+    e.grants.set(R(e), new Set(['command']));
+    e.updateRoom(R(e), { builder: 'claude' });
+    check('changing the builder forgets "for this chat" grants', !e.grants.has(R(e)));
+    e.updateRoom(R(e), { builder: 'codex' });
+    e.grants.set(R(e), new Set(['command']));
+    e.updateRoom(R(e), { workDir: path.join(e.dir, 'elsewhere') });
+    check('changing the folder forgets them too', !e.grants.has(R(e)));
+    e.updateRoom(R(e), { workDir: '', approval: 'ask' });
+    e.send(R(e), '@codex install');
+    await waitPerm(e);
+    e.updateRoom(R(e), { access: 'edit' });
+    check('an open card is closed as a no when the access level changes', e.getPermissions().length === 0);
+    await idle(e);
+    check('and the agent is told no, with the reason logged', /decline/.test(replyOf(e, 'codex').text) && /build settings changed/.test(acts(e)), acts(e));
+
+    // --- an interactive connection that won't start never turns "ask me" into "don't ask" ---
+    let argLog = logFile('args');
+    process.env.FAKE_ARGLOG = argLog;
+    e = mkCodex('dead', {});
+    e.send(R(e), '@codex hi');
+    await idle(e);
+    let runs = readLog(argLog).filter((x) => x.id === 'codex');
+    check('fallback at the ask level runs chat only, and tells the agent so', runs.length === 1 && runs[0].chatOnly === true && !runs[0].argv.some((a) => a.startsWith('--')), runs);
+    check('fallback note says what happened and why', /chat only/.test(notesOf(e)) && /asked to be asked first/.test(notesOf(e)), notesOf(e));
+    argLog = logFile('args');
+    process.env.FAKE_ARGLOG = argLog;
+    e = mkCodex('dead', { approval: 'auto' }, (cfg) => (cfg.agents.codex.accessArgs = { run: ['--fake-auto-flag'] }));
+    e.send(R(e), '@codex hi');
+    await idle(e);
+    runs = readLog(argLog).filter((x) => x.id === 'codex');
+    check('fallback at the auto level uses the normal flags you already agreed to', runs.length === 1 && runs[0].chatOnly === false && runs[0].argv.includes('--fake-auto-flag'), runs);
+    check('and says so', /run everything automatically/.test(notesOf(e)), notesOf(e));
+    delete process.env.FAKE_ARGLOG;
+
+    // --- Grok login and edit-only rooms ---
+    process.env.FAKE_ACP_NOCACHE = '1';
+    e = mkGrok('quiet', {});
+    e.send(R(e), '@grok hi');
+    await idle(e);
+    delete process.env.FAKE_ACP_NOCACHE;
+    check('grok: no cached login on offer means no authenticate call (never starts a sign-in nobody can see)', !readLog(e.logf).some((c) => c.method === 'authenticate'), readLog(e.logf).map((c) => c.method));
+    e = mkGrok('edit', { access: 'edit' });
+    e.send(R(e), '@grok edit');
+    p = (await waitPerm(e))[0];
+    check('grok in an edit-only room gets cards, not a "chatting only" note', p.kind === 'files' && !/chatting only/.test(notesOf(e)), notesOf(e));
+    e.answerPermission(p.id, 'once');
+    await idle(e);
+
+    // --- stop while the CLI is still being looked up ---
+    const pidf = logFile('pid');
+    process.env.FAKE_PIDFILE = pidf;
+    e = mk();
+    e.send(R(e), '@claude hi');
+    e.stop(R(e), true);
+    await idle(e);
+    await sleep(400);
+    delete process.env.FAKE_PIDFILE;
+    check('stop before the CLI starts means it never starts', !fs.existsSync(pidf + '.claude'));
+
+    // --- temp clean-up after a crash ---
+    const old = path.join(e.tmpDir, 'huddle-hooks-1-dead.json');
+    const fresh = path.join(e.tmpDir, 'huddle-hooks-2-live.json');
+    fs.writeFileSync(old, '{}');
+    fs.writeFileSync(fresh, '{}');
+    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    fs.utimesSync(old, twoHoursAgo, twoHoursAgo);
+    new Engine(e.dir);
+    check('leftover temp files from a crash are swept on start, live ones are kept', !fs.existsSync(old) && fs.existsSync(fresh));
+
+    // --- paths ---
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), 'huddle-scope-'));
+    check('a path inside the folder is inside', e._pathsInside(base, [path.join(base, 'a', 'b.txt')]) && e._pathsInside(base, ['rel.txt']));
+    check('../ is not inside', !e._pathsInside(base, ['../x.txt']));
+    check('no paths is never "inside"', !e._pathsInside(base, []) && !e._pathsInside(base, undefined) && !e._pathsInside(base, ['']));
+    if (process.platform !== 'win32') {
+      fs.symlinkSync(os.tmpdir(), path.join(base, 'link'));
+      check('a symlink inside the folder that points out is not inside', !e._pathsInside(base, [path.join(base, 'link', 'x.txt')]));
+    }
+    delete process.env.FAKE_APP;
+    delete process.env.FAKE_APP_LOG;
+    delete process.env.FAKE_ACP;
+    delete process.env.FAKE_ACP_LOG;
+    delete process.env.FAKE_TOOLS;
+  }
+
   console.log('context trimming');
   {
     const e = mk({ contextMessages: 5, contextChars: 2000 });
@@ -1188,6 +1464,11 @@ const alive = (pid) => {
   check('winQuote plain', winQuote('exec') === 'exec');
   check('winQuote spaces', winQuote('C:\\Users\\A B\\p.txt') === '"C:\\Users\\A B\\p.txt"');
   check('winQuote empty', winQuote('') === '""');
+  check('winQuote doubles embedded quotes (cmd.exe ignores backslashes)', winQuote('a"b') === '"a""b"');
+  check('winQuote keeps a trailing backslash from eating the closing quote', winQuote('C:\\a b\\') === '"C:\\a b\\\\"');
+  check('winQuote quotes cmd.exe separators', winQuote('a,b') === '"a,b"' && winQuote('a&b') === '"a&b"');
+  check('shim args with % ! " or a line break are refused', shimArgProblem(['ok', '50%']) === '50%' && shimArgProblem(['a!b']) === 'a!b' && shimArgProblem(['a"b']) === 'a"b' && !!shimArgProblem(['a\nb']));
+  check('ordinary shim args are fine', shimArgProblem(['--permission-mode', 'default', 'C:\\Users\\A B\\x.json']) === null);
 
   console.log(`\n${passes} passed, ${failures} failed`);
   process.exit(failures ? 1 : 0);

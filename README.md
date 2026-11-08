@@ -116,30 +116,30 @@ things to know before you turn it on:
 
 - the builder is told to work on a git branch (not main), not to force-push or delete things, and not to push unless you ask. that's only an instruction in the prompt, so use it on repos you can roll back.
 - the permission flags for each CLI are in **settings**, under each agent. I wrote them from the CLIs' docs and haven't tested them against every version, so try a throwaway repo first and check them against `--help` for your version. leave a level blank and that level won't work for that agent.
-- Grok's only build level is full auto-approve, so it's offered as "edit files and run commands" only. Codex runs in its own workspace sandbox, which usually can't reach the network, so it can edit and test but may not be able to push or install packages.
+- the builder normally works through permission cards (next section), and the flags above are only used when it can't: for an agent with no live connection, or as the fallback at *run everything automatically*. Grok's only headless build flag is full auto-approve, so without its live connection it can't do *edit files* at all. Codex's flags keep it in its own workspace sandbox, which usually can't reach the network, so it can edit and test but may not be able to push or install packages.
 
 ## permission cards (agents that ask first)
 
-Headless runs can't stop and ask, so an agent that needs to run a command or change a file in a way its sandbox doesn't allow just fails or stalls. For **Codexa** (the first agent wired up) Huddle talks to `codex app-server` instead, so Codex can pause mid-task and a card pops up in the room: what it wants to do, why, and where. You answer **allow once**, **allow for this chat**, or **deny**, and it carries on with your answer. If you're in another window, you get a desktop notification.
+Headless runs can't stop and ask, so an agent that needs to run a command or change a file just fails or stalls. So for a room's builder, Huddle connects to each CLI in a way that lets it pause mid-task: a card pops up in the room saying what it wants to do, why, and where. You answer **allow once**, **allow for this chat**, or **deny**, and it carries on with your answer. If you're in another window, you get a desktop notification.
 
 Pick how much you want to be asked in room settings → building → *when it needs permission*:
 
-- **ask me every time**: a card for every command or file change outside its sandbox.
-- **ask me, and let me allow things for this chat**: same cards, plus a button that remembers that kind of action until you close the app or change the setting.
-- **run automatically inside this folder**: no cards. Codex's own sandbox keeps it inside the room's folder (and usually off the network).
-- **run everything automatically**: no cards, no sandbox. It can touch anything on your computer and use the internet. Saving this setting asks you to confirm, and the room shows a loud banner while it's on.
+- **ask me every time**: a card before it changes a file or runs a command, and for Claude and Grok, before it uses the web (Claude also asks before it uses a connector). Reading and searching don't ask. Codex also skips the card for a few commands it counts as read-only, like listing or showing files.
+- **ask me, and let me allow things for this chat**: same cards, plus a button that remembers that kind of action until you close the app or change the room's level, builder, access or folder. For file changes it only ever covers files inside the room's folder.
+- **run automatically inside this folder**: in an *edit files and run commands* room, Codex works inside the folder with no cards, and its own sandbox stops it writing anywhere else (and usually from using the network). Claude and Grok can't be sandboxed, so for them, and for Codex in an *edit files* room, this means file changes Huddle can see are inside the folder go through, and anything else (another path, a command, the web, a connector) still asks. That's Huddle checking the path, not a sandbox.
+- **run everything automatically**: no cards and no folder limit. In an *edit files and run commands* room there's no sandbox either: it can touch anything on your computer and use the internet. In an *edit files* room commands are still refused. Saving this setting asks you to confirm, and the room shows a loud banner while it's on.
 
-The **activity** button in a room shows an honest record of what agents did, what they asked for, and what you allowed or denied. It lives in memory, not on disk. In an *edit files* room, commands are refused automatically and that refusal is logged.
+The **activity** button in a room shows an honest record of what agents did, what they asked for, what you allowed or denied, and every card that closed without an answer (with the reason). It lives in memory, not on disk. In an *edit files* room, commands are refused automatically at every level, including *run everything automatically*, and each refusal is logged.
 
 How each agent is connected:
 
 - **Codexa** talks to `codex app-server`.
-- **Claude** uses Claude Code's own documented *hooks*: for each run, Huddle gives it a temporary settings file with a hook that reports every command, file change and web lookup to a tiny server on `127.0.0.1` (random port, one-time token) before it happens. Reading and searching pass straight through. It's the same `claude` you already logged into, nothing private or extra.
-- **Grok** talks to `grok agent stdio` (the Agent Client Protocol).
+- **Claude** uses Claude Code's own documented *hooks*: for each run, Huddle gives it a temporary settings file (in AI Huddle's own app data folder, readable by you only, deleted after the run) with a hook that reports every command, file change, web lookup and connector call to a tiny server on `127.0.0.1` (random port, random per-run token) before it happens. Reading and searching pass straight through. It's the same `claude` you already logged into, nothing private or extra. In an *edit files* room Huddle also switches Claude's Bash tool off, so a command can't get through even if the hook doesn't fire.
+- **Grok** talks to `grok agent stdio` (the Agent Client Protocol), using the login Grok already has. If Grok doesn't offer that, Huddle doesn't try to sign in for you.
 
-Claude and Grok can't be sandboxed the way Codex can, so for them *run automatically inside this folder* means file edits go through without asking, but commands and web use still ask. Only *run everything automatically* skips the questions.
+"Allow for this chat" is remembered by Huddle, in memory, for that room. The CLI itself only ever gets a one-time yes, so nothing is saved into Claude's, Codex's or Grok's own settings.
 
-If a CLI can't start its interactive connection (an older version, say), Huddle says so in the room and runs it the normal way with its usual edit/run flags.
+If a CLI can't start its interactive connection (an older version, say), Huddle says so in the room. At *run everything automatically* it then runs the agent the normal way with its usual edit/run flags, because you already agreed to no questions. At every other level it runs the agent as chat only for that message, and tells the agent why, because quietly swapping "ask me" for "don't ask me" is exactly what these levels promise not to do.
 
 ## tools panel (what each agent can actually do)
 

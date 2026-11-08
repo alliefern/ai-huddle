@@ -3,8 +3,8 @@
 // ask before it runs a command or edits a file. We don't advertise file-system or terminal capabilities, so Grok
 // uses its own tools and just asks us for permission.
 //
-// Flow: initialize -> authenticate -> session/new -> session/prompt, with session/update notifications streaming
-// in and session/request_permission requests coming from Grok.
+// Flow: initialize -> authenticate (only with the login Grok already has) -> session/new -> session/prompt, with
+// session/update notifications streaming in and session/request_permission requests coming from Grok.
 
 const { RpcPeer } = require('./jsonrpc');
 
@@ -18,29 +18,53 @@ function kindOf(toolCall) {
   return 'other';
 }
 
+// Every path a file change mentions, from its raw input and its locations. A move touches both ends.
+function pathsOf(tc, raw) {
+  const out = [];
+  for (const k of ['path', 'file_path', 'filePath', 'source', 'destination', 'from', 'to', 'old_path', 'new_path', 'oldPath', 'newPath']) {
+    const v = raw[k];
+    if (typeof v === 'string' && v) out.push(v);
+    else if (Array.isArray(v)) v.forEach((x) => typeof x === 'string' && x && out.push(x));
+  }
+  if (Array.isArray(tc.locations)) tc.locations.forEach((l) => l && typeof l.path === 'string' && l.path && out.push(l.path));
+  return [...new Set(out)];
+}
+
 function describe(params) {
   const tc = (params && params.toolCall) || {};
   const kind = kindOf(tc);
   const raw = tc.rawInput && typeof tc.rawInput === 'object' ? tc.rawInput : {};
   let detail = '';
+  let paths = [];
   if (kind === 'command') detail = raw.command || raw.cmd || tc.title || '';
-  else if (kind === 'files') detail = raw.path || raw.file_path || raw.filePath || (Array.isArray(tc.locations) && tc.locations.map((l) => l.path).filter(Boolean).join('\n')) || tc.title || '';
-  else detail = raw.url || raw.query || tc.title || '';
+  else if (kind === 'files') {
+    paths = pathsOf(tc, raw);
+    detail = paths.join('\n') || tc.title || '(Grok did not say which files)';
+  } else detail = raw.url || raw.query || tc.title || '';
   if (Array.isArray(detail)) detail = detail.join(' ');
   const titles = { command: 'wants to run a command', files: 'wants to change files', web: 'wants to use the web', other: 'is asking for permission' };
-  return { kind, title: titles[kind], detail: String(detail).slice(0, 1500), cwd: raw.cwd ? String(raw.cwd) : '', reason: kind === 'other' && tc.title ? String(tc.title).slice(0, 300) : '' };
+  return {
+    kind,
+    title: titles[kind],
+    detail: String(detail).slice(0, 1500),
+    cwd: raw.cwd ? String(raw.cwd) : '',
+    reason: kind === 'other' && tc.title ? String(tc.title).slice(0, 300) : '',
+    paths,
+  };
 }
 
-// Pick the option that matches what the person decided. Falls back to cancelling, which Grok treats as "no".
-function outcomeFor(options, allow, forSession) {
+// Pick the option that matches what the person decided. "Allow for this chat" is remembered by AI Huddle (in memory,
+// per room), so we answer Grok with a one-time yes whenever it offers one: an "always allow" could be saved in Grok's
+// own settings and outlive the chat. If saying no isn't offered, cancelling is the protocol's way to refuse.
+function outcomeFor(options, allow) {
   const opts = Array.isArray(options) ? options : [];
-  const find = (...kinds) => opts.find((o) => kinds.includes(o.kind));
-  const pick = allow ? (forSession && find('allow_always')) || find('allow_once') || find('allow_always') : find('reject_once') || find('reject_always');
+  const find = (...kinds) => opts.find((o) => o && kinds.includes(o.kind));
+  const pick = allow ? find('allow_once') || find('allow_always') : find('reject_once') || find('reject_always');
   if (pick && pick.optionId != null) return { outcome: { outcome: 'selected', optionId: pick.optionId } };
   return { outcome: { outcome: 'cancelled' } };
 }
 
-// opts: { spawn(args)->child, args, cwd, prompt, ask(info)->{decision,forSession}, activity(text), onWaiting(bool),
+// opts: { spawn(args)->child, args, cwd, prompt, ask(info)->{decision}, activity(text), onWaiting(bool),
 //         timeoutMs, kill(child), entry, version }
 function run(opts) {
   return new Promise((resolve) => {
@@ -60,9 +84,10 @@ function run(opts) {
     let sessionId = null;
     let peer = null;
 
+    // An inactivity clock: any message from Grok resets it, and it's paused while a card waits on you.
     const arm = () => {
       clearTimeout(timer);
-      if (!opts.timeoutMs || waiting > 0) return;
+      if (!opts.timeoutMs || waiting > 0 || finished) return;
       timer = setTimeout(() => {
         timedOut = true;
         if (sessionId && peer) peer.notify('session/cancel', { sessionId });
@@ -99,7 +124,6 @@ function run(opts) {
         } else if (u.sessionUpdate === 'agent_thought_chunk' && opts.activity) opts.activity('thinking');
       },
       async onRequest(msg) {
-        arm();
         if (msg.method !== 'session/request_permission') throw new Error('not supported by AI Huddle: ' + msg.method);
         const info = describe(msg.params);
         waiting++;
@@ -107,7 +131,7 @@ function run(opts) {
         if (opts.onWaiting) opts.onWaiting(true);
         try {
           const ans = await opts.ask(Object.assign({ method: msg.method }, info));
-          return outcomeFor(msg.params && msg.params.options, !!(ans && ans.decision === 'allow'), !!(ans && ans.forSession));
+          return outcomeFor(msg.params && msg.params.options, !!(ans && ans.decision === 'allow'));
         } finally {
           waiting--;
           if (opts.onWaiting) opts.onWaiting(waiting > 0);
@@ -125,9 +149,10 @@ function run(opts) {
     (async () => {
       try {
         const init = await peer.request('initialize', { protocolVersion: 1, clientCapabilities: {} }, INIT_TIMEOUT_MS);
+        // Only reuse the login Grok already has. Any other method could start an interactive sign-in nobody can see,
+        // so if cached_token isn't offered we skip authenticate and let session/new say whether we're logged in.
         const methods = ((init && init.authMethods) || []).map((m) => m && m.id).filter(Boolean);
-        const method = methods.includes('cached_token') ? 'cached_token' : methods[0];
-        if (method) await peer.request('authenticate', { methodId: method }, INIT_TIMEOUT_MS);
+        if (methods.includes('cached_token')) await peer.request('authenticate', { methodId: 'cached_token' }, INIT_TIMEOUT_MS);
         const s = await peer.request('session/new', { cwd: opts.cwd, mcpServers: [] }, INIT_TIMEOUT_MS);
         sessionId = s && (s.sessionId || (s.session && s.session.id));
         if (!sessionId) throw new Error('no session id');
@@ -153,4 +178,4 @@ function run(opts) {
   });
 }
 
-module.exports = { run, describe, outcomeFor, kindOf };
+module.exports = { run, describe, outcomeFor, kindOf, pathsOf };

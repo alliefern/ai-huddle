@@ -9,43 +9,61 @@ const { RpcPeer } = require('./jsonrpc');
 
 const INIT_TIMEOUT_MS = 20000;
 
-// How each Huddle approval level maps onto Codex's own two dials.
-function policyFor(level) {
-  if (level === 'auto') return { approvalPolicy: 'never', sandbox: 'danger-full-access' };
-  if (level === 'folder') return { approvalPolicy: 'never', sandbox: 'workspace-write' };
-  return { approvalPolicy: 'on-request', sandbox: 'workspace-write' }; // ask, chat
+// How each Huddle approval level (and the room's access) maps onto Codex's own two dials.
+//
+// - "untrusted" makes Codex ask before any command it doesn't consider read-only, and before file changes, so the
+//   engine sees each one and applies the room's rules (ask, remember for this chat, files-inside-the-folder, or refuse
+//   commands in an edit-only room). "on-request" would let Codex run commands and edit inside its sandbox without
+//   asking at all, which isn't what "ask me every time" says.
+// - Only an edit-and-run room hands the decision to Codex itself: "folder" is its workspace sandbox with no questions,
+//   "auto" is no sandbox and no questions.
+function policyFor(level, access) {
+  if (access === 'run' && level === 'auto') return { approvalPolicy: 'never', sandbox: 'danger-full-access' };
+  if (access === 'run' && level === 'folder') return { approvalPolicy: 'never', sandbox: 'workspace-write' };
+  return { approvalPolicy: 'untrusted', sandbox: 'workspace-write' };
 }
 
 // decision: 'allow' | 'deny'. Newer servers say accept/decline, older ones approved/denied.
-function answerFor(method, decision, forSession) {
+// "For this chat" is remembered by AI Huddle (in memory, per room), never by Codex: a session-wide yes inside Codex
+// would outlive a level change made while it's still running.
+function answerFor(method, decision) {
   const legacy = method === 'execCommandApproval' || method === 'applyPatchApproval';
-  if (legacy) return { decision: decision === 'allow' ? (forSession ? 'approved_for_session' : 'approved') : 'denied' };
-  return { decision: decision === 'allow' ? (forSession ? 'acceptForSession' : 'accept') : 'decline' };
+  if (legacy) return { decision: decision === 'allow' ? 'approved' : 'denied' };
+  return { decision: decision === 'allow' ? 'accept' : 'decline' };
 }
 
-function describeRequest(msg) {
+// items: itemId -> the item from item/started (file-change requests only name the item, the paths live on it)
+function describeRequest(msg, items) {
   const p = msg.params || {};
   const m = msg.method || '';
+  const item = (items && p.itemId != null && items.get(p.itemId)) || null;
   if (/commandExecution|execCommand/i.test(m)) {
-    const cmd = Array.isArray(p.command) ? p.command.join(' ') : String(p.command || '');
-    return { kind: 'command', title: 'wants to run a command', detail: cmd.slice(0, 1500), cwd: p.cwd ? String(p.cwd) : '', reason: p.reason ? String(p.reason).slice(0, 500) : '' };
+    const c = p.command != null ? p.command : item && item.command;
+    const cmd = Array.isArray(c) ? c.join(' ') : String(c || '');
+    const cwd = p.cwd || (item && item.cwd) || '';
+    return { kind: 'command', title: 'wants to run a command', detail: cmd.slice(0, 1500), cwd: String(cwd), reason: p.reason ? String(p.reason).slice(0, 500) : '', paths: [] };
   }
   if (/fileChange|applyPatch/i.test(m)) {
-    let files = '';
-    if (p.fileChanges && typeof p.fileChanges === 'object') files = Object.keys(p.fileChanges).join('\n');
-    else if (Array.isArray(p.changes)) files = p.changes.map((c) => c && c.path).filter(Boolean).join('\n');
-    if (!files && p.grantRoot) files = `write access to ${p.grantRoot}`;
-    return { kind: 'files', title: 'wants to change files', detail: files.slice(0, 1500), cwd: '', reason: p.reason ? String(p.reason).slice(0, 500) : '' };
+    let paths = [];
+    if (p.fileChanges && typeof p.fileChanges === 'object') paths = Object.keys(p.fileChanges);
+    else if (Array.isArray(p.changes)) paths = p.changes.map((c) => c && c.path).filter(Boolean);
+    else if (item && Array.isArray(item.changes)) paths = item.changes.map((c) => c && c.path).filter(Boolean);
+    paths = paths.map(String);
+    // Asking for write access to a whole folder is never treated as "inside the room's folder": it always asks.
+    if (p.grantRoot) paths = [];
+    const detail = paths.length ? paths.join('\n') : p.grantRoot ? `write access to ${p.grantRoot}` : '(Codex did not say which files)';
+    return { kind: 'files', title: 'wants to change files', detail: detail.slice(0, 1500), cwd: '', reason: p.reason ? String(p.reason).slice(0, 500) : '', paths };
   }
-  return { kind: 'other', title: 'is asking for permission', detail: m, cwd: '', reason: '' };
+  return { kind: 'other', title: 'is asking for permission', detail: m, cwd: '', reason: '', paths: [] };
 }
 
 // opts: {
-//   spawn(args) -> child, args: ['app-server'], cwd, prompt, level,
-//   ask(info) -> Promise<{decision:'allow'|'deny', forSession?:bool}>,
-//   activity(text), onWaiting(isWaiting), timeoutMs, version
+//   spawn(args) -> child, args: ['app-server'], cwd, prompt, level, access,
+//   ask(info) -> Promise<{decision:'allow'|'deny'}>,
+//   activity(text), onWaiting(isWaiting), timeoutMs, version, kill(child), entry
 // }
-// Returns {stdout, stderr, code, timedOut, error, fallback}. fallback=true means "couldn't talk to app-server at all".
+// Returns {stdout, stderr, code, timedOut, error, fallback}. fallback=true means "couldn't get a turn going at all,
+// nothing ran".
 function run(opts) {
   return new Promise((resolve) => {
     let child;
@@ -59,16 +77,18 @@ function run(opts) {
     let lastMsg = '';
     let deltas = '';
     let finished = false;
-    let started = false; // turn/start accepted
+    let started = false; // turn/start sent
     let timedOut = false;
     let waiting = 0;
     let timer = null;
     let thread = null;
     let peer = null;
+    const items = new Map();
 
+    // An inactivity clock: any message from Codex resets it, and it's paused while a card waits on you.
     const arm = () => {
       clearTimeout(timer);
-      if (!opts.timeoutMs || waiting > 0) return;
+      if (!opts.timeoutMs || waiting > 0 || finished) return;
       timer = setTimeout(() => {
         timedOut = true;
         done({ code: null });
@@ -99,6 +119,10 @@ function run(opts) {
         if (m === 'item/agentMessage/delta' && typeof p.delta === 'string') deltas += p.delta;
         else if (m === 'item/started' && p.item) {
           const it = p.item;
+          if (it.id != null) {
+            items.set(it.id, it);
+            if (items.size > 500) items.delete(items.keys().next().value);
+          }
           if (it.type === 'commandExecution') opts.activity && opts.activity(`running: ${String(it.command || '').slice(0, 160)}`);
           else if (it.type === 'fileChange') opts.activity && opts.activity('editing files');
           else if (it.type === 'webSearch') opts.activity && opts.activity('searching the web');
@@ -119,14 +143,13 @@ function run(opts) {
       },
 
       async onRequest(msg) {
-        arm();
-        const info = describeRequest(msg);
+        const info = describeRequest(msg, items);
         waiting++;
         clearTimeout(timer);
         if (opts.onWaiting) opts.onWaiting(true);
         try {
           const ans = await opts.ask(Object.assign({ method: msg.method }, info));
-          return answerFor(msg.method, ans && ans.decision === 'allow' ? 'allow' : 'deny', !!(ans && ans.forSession));
+          return answerFor(msg.method, ans && ans.decision === 'allow' ? 'allow' : 'deny');
         } finally {
           waiting--;
           if (opts.onWaiting) opts.onWaiting(waiting > 0);
@@ -151,7 +174,7 @@ function run(opts) {
           INIT_TIMEOUT_MS
         );
         peer.notify('initialized');
-        const pol = policyFor(opts.level);
+        const pol = policyFor(opts.level, opts.access);
         const t = await peer.request('thread/start', { cwd: opts.cwd, approvalPolicy: pol.approvalPolicy, sandbox: pol.sandbox }, INIT_TIMEOUT_MS);
         thread = t && (t.thread || t);
         const threadId = thread && (thread.id || thread.threadId);
@@ -161,8 +184,9 @@ function run(opts) {
         await peer.request('turn/start', { threadId, input: [{ type: 'text', text: opts.prompt }] }, INIT_TIMEOUT_MS);
       } catch (e) {
         if (finished) return;
-        // Couldn't get a turn going: hand back to the normal launcher (nothing has run yet).
-        done({ code: 1, error: e, fallback: !started });
+        // Couldn't get a turn going: hand back to the engine. A JSON-RPC error on turn/start means Codex refused the
+        // turn, so nothing ran either. A timeout does NOT count: the turn may have started, so it is not re-run.
+        done({ code: 1, error: e, fallback: !started || !!e.rpc });
       }
     })();
 

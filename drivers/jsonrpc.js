@@ -2,6 +2,8 @@
 // A tiny JSON-RPC peer over a child process's stdin/stdout, one JSON message per line.
 // Used for CLIs that can talk to us while they work (so they can ask permission mid-task).
 
+const MAX_LINE = 16 * 1024 * 1024;
+
 class RpcPeer {
   // handlers: { onRequest(msg) -> Promise<result>, onNotification(msg), onClose(code) }
   constructor(child, handlers = {}) {
@@ -21,6 +23,16 @@ class RpcPeer {
 
   _data(d) {
     this.buf += d;
+    // One message per line. A "line" this long means the other side isn't speaking this protocol: stop listening
+    // rather than buffer without limit.
+    if (this.buf.length > MAX_LINE && this.buf.indexOf('\n') < 0) {
+      this.buf = '';
+      this._close(null, new Error('the CLI sent a message too large to read'));
+      try {
+        this.child.kill();
+      } catch (_) {}
+      return;
+    }
     let i;
     while ((i = this.buf.indexOf('\n')) >= 0) {
       const line = this.buf.slice(0, i).trim();
@@ -80,7 +92,11 @@ class RpcPeer {
         reject(Object.assign(new Error(`${method} timed out`), { timeout: true }));
       }, timeoutMs);
       this.pending.set(id, p);
-      this._send({ id, method, params: params || {} });
+      if (!this._send({ id, method, params: params || {} })) {
+        this.pending.delete(id);
+        clearTimeout(p.timer);
+        reject(new Error('connection closed'));
+      }
     });
   }
 

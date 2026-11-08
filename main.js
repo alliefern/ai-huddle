@@ -63,7 +63,7 @@ function wireUpdater() {
 }
 
 function wireEngine() {
-  engine = new Engine(path.join(app.getPath('userData'), 'huddle'));
+  engine = new Engine(path.join(app.getPath('userData'), 'huddle'), { appVersion: app.getVersion() });
   engine.on('message', (m) => send('huddle:message', m));
   engine.on('message-updated', (m) => send('huddle:message-updated', m));
   engine.on('status', (s) => send('huddle:status', s));
@@ -71,13 +71,19 @@ function wireEngine() {
   engine.on('rooms', (r) => send('huddle:rooms', r));
   engine.on('skills', (s) => send('huddle:skills', s));
   engine.on('tools', (c) => send('huddle:tools', c));
+  // A desktop notification only for a card that's new, not every time the list changes (answering one card
+  // shouldn't re-announce the others).
+  const announced = new Set();
   engine.on('permissions', (list) => {
     send('huddle:perms', list);
+    const fresh = list.filter((p) => !announced.has(p.id));
+    for (const id of [...announced]) if (!list.some((p) => p.id === id)) announced.delete(id);
+    fresh.forEach((p) => announced.add(p.id));
     try {
       const { Notification } = require('electron');
       const w = win && !win.isDestroyed() ? win : null;
-      if (list.length && w && !w.isFocused() && Notification.isSupported()) {
-        const p = list[list.length - 1];
+      if (fresh.length && w && !w.isFocused() && Notification.isSupported()) {
+        const p = fresh[fresh.length - 1];
         new Notification({ title: 'AI Huddle needs an answer', body: `${p.agentLabel} ${p.title}` }).show();
       }
     } catch (_) {}

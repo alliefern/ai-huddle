@@ -48,7 +48,12 @@ function runQuick(H, resolved, args, { timeoutMs = 15000, cwd } = {}) {
     const shim = H.IS_WIN && /\.(cmd|bat)$/i.test(resolved);
     let child;
     try {
-      if (shim) child = spawn([resolved, ...args].map(H.winQuote).join(' '), [], { cwd, shell: true, windowsHide: true, env: process.env });
+      if (shim) {
+        // cmd.exe would expand or split these, so refuse rather than guess (same rule as agent runs)
+        const bad = H.shimArgProblem && H.shimArgProblem([resolved, ...args]);
+        if (bad) return finish({ error: new Error(`can't safely pass "${bad.slice(0, 80)}" to a .cmd shim on Windows`) });
+        child = spawn([resolved, ...args].map(H.winQuote).join(' '), [], { cwd, shell: true, windowsHide: true, env: process.env });
+      }
       else if (H.IS_WIN) child = spawn(resolved, args, { cwd, windowsHide: true, env: process.env });
       else child = spawn(resolved, args, { cwd, env: process.env, detached: true });
     } catch (e) {
