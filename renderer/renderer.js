@@ -513,6 +513,71 @@
 
   // ---------- room header / roster / typing ----------
 
+  const APPROVAL_TEXT = {
+    ask: { short: 'asks before each action', long: 'ask me every time' },
+    chat: { short: 'asks once per kind of action', long: 'ask me, and let me allow things for this chat' },
+    folder: { short: 'runs freely in this folder', long: 'run automatically inside this folder' },
+    auto: { short: 'runs everything automatically', long: 'run everything automatically (no questions, no folder limit)' },
+  };
+
+  function renderPerms() {
+    const dock = $('#perm-dock');
+    if (!dock) return;
+    const r = activeRoom();
+    const all = state.perms || [];
+    const mine = r ? all.filter((p) => p.room === r.id) : [];
+    const other = all.length - mine.length;
+    dock.innerHTML = '';
+    dock.hidden = !all.length;
+    if (!all.length) return;
+    mine.forEach((p) => {
+      const card = document.createElement('div');
+      card.className = 'perm-card';
+      card.style.setProperty('--c', colorOf(p.agent));
+      const h = document.createElement('div');
+      h.className = 'perm-title';
+      h.textContent = `${p.agentLabel} ${p.title}`;
+      card.append(h);
+      if (p.detail) {
+        const pre = document.createElement('pre');
+        pre.className = 'perm-detail';
+        pre.textContent = p.detail;
+        card.append(pre);
+      }
+      const meta = [p.reason && `why: ${p.reason}`, p.cwd && `in: ${p.cwd}`].filter(Boolean).join('  ·  ');
+      if (meta) {
+        const m = document.createElement('p');
+        m.className = 'perm-meta';
+        m.textContent = meta;
+        card.append(m);
+      }
+      const row = document.createElement('div');
+      row.className = 'perm-actions';
+      const btn = (label, kind, choice, title) => {
+        const b = document.createElement('button');
+        b.className = 'btn small ' + kind;
+        b.textContent = label;
+        if (title) b.title = title;
+        b.addEventListener('click', () => {
+          row.querySelectorAll('button').forEach((x) => (x.disabled = true));
+          api.answerPermission(p.id, choice);
+        });
+        return b;
+      };
+      row.append(btn('allow once', 'primary', 'once'));
+      if (p.canRemember) row.append(btn('allow for this chat', '', 'chat', 'allows this kind of action until you close the app or change the level'));
+      row.append(btn('deny', 'danger', 'deny'));
+      card.append(row);
+      dock.append(card);
+    });
+    if (other > 0) {
+      const o = document.createElement('p');
+      o.className = 'perm-other';
+      o.textContent = `${other} more waiting in ${mine.length ? 'other rooms' : 'another room'}. switch rooms to answer.`;
+      dock.append(o);
+    }
+  }
+
   function renderHeader() {
     const r = activeRoom();
     $('#auto').checked = !!state.config.settings.autoHandoff;
@@ -526,8 +591,18 @@
     if (bt) {
       bt.hidden = !(bAgent && r.access && r.access !== 'chat');
       if (!bt.hidden) {
-        bt.textContent = `${bAgent.label} is building here (${r.access === 'run' ? 'edits files + runs commands' : 'edits files'})`;
-        bt.title = 'only this agent can change files in this room. change it in room settings.';
+        const lvl = APPROVAL_TEXT[r.approval || 'ask'];
+        const live = !!(bAgent && bAgent.driver);
+        const auto = live && r.approval === 'auto';
+        bt.textContent =
+          `${bAgent.label} is building here (${r.access === 'run' ? 'edits files + runs commands' : 'edits files'}` +
+          (live ? `; ${lvl.short}` : '') +
+          ')' +
+          (auto ? ' · NO QUESTIONS ASKED' : '');
+        bt.classList.toggle('danger', auto);
+        bt.title = auto
+          ? 'this agent can do anything on your computer without asking. change it in room settings.'
+          : 'only this agent can change files in this room. change it in room settings.';
       }
     }
     input.placeholder = `message ${r.name}. Enter sends, Shift+Enter adds a line.`;
@@ -594,7 +669,10 @@
       const t = document.createElement('span');
       t.className = 't';
       t.style.setProperty('--c', colorOf(id));
-      t.innerHTML = `${esc(nameOf(id))} is thinking<span class="d">.</span><span class="d">.</span><span class="d">.</span>`;
+      const doing = r && state.status.doing && state.status.doing[r.id] && state.status.doing[r.id][id];
+      t.innerHTML = doing
+        ? `${esc(nameOf(id))}: ${esc(doing)}`
+        : `${esc(nameOf(id))} is thinking<span class="d">.</span><span class="d">.</span><span class="d">.</span>`;
       box.append(t);
     });
     Object.entries(queued).forEach(([id, n]) => {
@@ -611,6 +689,7 @@
     renderWho();
     renderRoster();
     renderTyping();
+    renderPerms();
   }
 
   function renderAllChrome() {
@@ -619,6 +698,7 @@
     renderWho();
     renderRoster();
     renderTyping();
+    renderPerms();
   }
 
   async function selectRoom(id) {
@@ -1265,6 +1345,42 @@
     }
   }
 
+  async function openActivitySheet() {
+    const r = activeRoom();
+    if (!r) return;
+    const fill = async (body) => {
+      const list = await api.getActivity(r.id);
+      body.innerHTML = '';
+      const g = document.createElement('div');
+      g.className = 'group';
+      g.innerHTML = `<h3>${esc(r.name)}: what happened</h3>`;
+      const p = document.createElement('p');
+      p.className = 'hint';
+      p.textContent = "everything an agent did or asked for here since the app opened, newest first. this is the honest record: what was asked, what you allowed or denied, and what it ran. it isn't saved to disk.";
+      g.append(p);
+      if (!list.length) {
+        const e = document.createElement('p');
+        e.className = 'hint';
+        e.textContent = 'nothing yet. when a builder agent does something, it shows up here.';
+        g.append(e);
+      }
+      list
+        .slice()
+        .reverse()
+        .forEach((a) => {
+          const row = document.createElement('div');
+          row.className = 'act-row act-' + a.kind;
+          const t = new Date(a.ts).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+          row.innerHTML = `<span class="act-time">${esc(t)}</span><span class="act-kind">${esc(a.kind)}</span><span class="act-who">${esc(nameOf(a.agent))}</span><span class="act-text"></span>`;
+          row.querySelector('.act-text').textContent = a.text;
+          g.append(row);
+        });
+      body.append(g);
+    };
+    openSheet('activity', fill, [{ label: 'refresh', kind: 'ghost', onClick: () => fill($('#sheet-body')) }, 'spacer']);
+  }
+
+  $('#activity-btn').addEventListener('click', openActivitySheet);
   $('#skills-btn').addEventListener('click', openSkillsSheet);
   $('#tools-btn').addEventListener('click', openToolsSheet);
   $('#memory-btn').addEventListener('click', openMemorySheet);
@@ -1504,8 +1620,34 @@
         refs.access.addEventListener('change', refreshBuildWarn);
         refs.builder.addEventListener('change', refreshBuildWarn);
         refreshBuildWarn();
-        bgrid.append(...field('access level', refs.access), ...field('who builds', refs.builder));
-        bg.append(bgrid, buildWarn);
+        refs.approval = document.createElement('select');
+        Object.entries(APPROVAL_TEXT).forEach(([v, t]) => {
+          const o = document.createElement('option');
+          o.value = v;
+          o.textContent = t.long;
+          refs.approval.append(o);
+        });
+        refs.approval.value = editing && room.approval ? room.approval : 'ask';
+        const apprWarn = document.createElement('p');
+        apprWarn.className = 'hint appr-warn';
+        const refreshAppr = () => {
+          const who = refs.builder.value;
+          const live = who && (state.config.agents[who] || {}).driver;
+          const v = refs.approval.value;
+          const base = {
+            ask: 'a card pops up before every command or file change and nothing happens until you answer.',
+            chat: "same cards, plus an \"allow for this chat\" button. it remembers that kind of action until you close the app or change this setting.",
+            folder: "it works inside this room's folder without asking. its own sandbox stops it from touching anything outside, and usually from using the network.",
+            auto: 'WARNING: no questions and no sandbox. it can read, change or delete anything on your computer, install software and use the internet. only use this on a machine and folder you can afford to lose.',
+          }[v];
+          apprWarn.textContent = (live ? '' : 'this only works for agents with a live connection (Codexa for now). the others use their normal edit/run flags above. ') + base;
+          apprWarn.classList.toggle('danger-text', v === 'auto');
+        };
+        refs.approval.addEventListener('change', refreshAppr);
+        refs.builder.addEventListener('change', refreshAppr);
+        refreshAppr();
+        bgrid.append(...field('access level', refs.access), ...field('who builds', refs.builder), ...field('when it needs permission', refs.approval));
+        bg.append(bgrid, buildWarn, apprWarn);
 
         if (editing) {
           const cr = document.createElement('div');
@@ -1594,7 +1736,15 @@
               skills: Object.keys(refs.pins).filter((s) => refs.pins[s].checked),
               access: refs.access.value,
               builder: refs.builder.value,
+              approval: refs.approval.value,
             };
+            const live = payload.builder && (state.config.agents[payload.builder] || {}).driver;
+            if (live && payload.access !== 'chat' && payload.approval === 'auto' && !(editing && room.approval === 'auto' && room.builder === payload.builder)) {
+              const ok = confirm(
+                `run everything automatically?\n\n${state.config.agents[payload.builder].label} will be able to change or delete anything on this computer, run any command, install software and use the internet, and it will never ask you first.\n\nonly say yes if you trust the task and can undo it.`
+              );
+              if (!ok) return;
+            }
             if (editing) {
               await api.updateRoom(room.id, payload);
               closeSheet();
@@ -2117,6 +2267,10 @@
     renderAll();
   });
   api.onNote((t) => toast(t));
+  api.onPermissions((list) => {
+    state.perms = list;
+    renderPerms();
+  });
   api.onTools((c) => {
     state.tools = c;
     updateToolsBadge();
@@ -2125,6 +2279,10 @@
   api.getTools().then((c) => {
     state.tools = c;
     updateToolsBadge();
+  });
+  api.getPermissions().then((list) => {
+    state.perms = list;
+    renderPerms();
   });
   document.addEventListener('huddle-theme', () => {
     if (!state.config) return;

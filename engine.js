@@ -21,6 +21,7 @@ const MIME = {
 };
 const { SkillStore, candidateSources } = require('./skills');
 const caps = require('./capabilities');
+const codexDriver = require('./drivers/codex-appserver');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -68,6 +69,9 @@ const DEFAULTS = {
       // Codex's own sandbox: it can write inside the folder and run commands there, but usually has no network.
       probe: { version: ['--version'], mcp: ['mcp', 'list'] },
       accessArgs: { edit: ['--sandbox', 'workspace-write'], run: ['--sandbox', 'workspace-write'] },
+      // Talks to `codex app-server` so it can ask before running commands or changing files (permission cards).
+      driver: 'codex-appserver',
+      driverArgs: ['app-server'],
     },
     grok: {
       // Per xAI's docs, headless mode is `grok -p "<prompt>"`.
@@ -95,6 +99,10 @@ const TEAMS = {
 // Build mode: what an agent may do in a room's folder. 'chat' adds nothing. Which flags turn each level on is
 // per agent (agents.<id>.accessArgs), shown and editable in Settings. A missing level means that agent can't do it.
 const ACCESS_LEVELS = ['chat', 'edit', 'run'];
+// When a builder agent needs permission: ask every time, ask once per kind of action per chat, run freely inside the
+// room's folder, or run everything with no questions. Only agents with an interactive driver can honour these.
+const APPROVAL_LEVELS = ['ask', 'chat', 'folder', 'auto'];
+const ACTIVITY_MAX = 300;
 const MEMORY_MAX_CHARS = 30000;
 
 const INPUT_MODES = ['stdin', 'file', 'arg'];
@@ -222,6 +230,11 @@ class Engine extends EventEmitter {
     this.epochs = new Map(); // roomId -> number, bumped by stop(); stale runs are discarded
     this.queues = {}; // "room|agent" -> [task]
     this.running = new Map(); // "room|agent" -> {child, room, agent}
+    this.perms = new Map(); // permission id -> pending request (see _askPermission)
+    this.nextPermId = 1;
+    this.grants = new Map(); // roomId -> Set of kinds allowed 'for this chat' (in memory: ends when the app closes)
+    this.activity = new Map(); // roomId -> recent things agents did / asked / were allowed
+    this.doing = new Map(); // 'room|agent' -> short live text
     this.rounds = new Map(); // message id -> {runs}
     this.lastResponder = new Map(); // roomId -> agentId
     this._saveTimer = null;
@@ -299,6 +312,7 @@ class Engine extends EventEmitter {
       workDir: String(r.workDir || ''),
       skills: Array.isArray(r.skills) ? r.skills.map(String).slice(0, 40) : [],
       access: ACCESS_LEVELS.includes(r.access) ? r.access : 'chat',
+      approval: APPROVAL_LEVELS.includes(r.approval) ? r.approval : 'ask',
       builder: ids.includes(r.builder) ? r.builder : '',
       archived: !!r.archived,
       created: r.created || Date.now(),
@@ -404,6 +418,10 @@ class Engine extends EventEmitter {
           }
           a.accessArgs = next;
         }
+        if (trusted) {
+          if (p.driver === 'codex-appserver') a.driver = p.driver;
+          if (Array.isArray(p.driverArgs)) a.driverArgs = p.driverArgs.map(String).filter((x) => x.length);
+        }
         if (trusted && p.probe && typeof p.probe === 'object') {
           const next = {};
           for (const k of ['version', 'mcp']) if (Array.isArray(p.probe[k])) next[k] = p.probe[k].map(String).filter((x) => x.length);
@@ -465,6 +483,7 @@ class Engine extends EventEmitter {
       workDir: r.workDir,
       skills: (r.skills || []).slice(),
       access: r.access || 'chat',
+      approval: r.approval || 'ask',
       builder: r.builder || '',
       archived: !!r.archived,
       lastId: last ? last.id : 0,
@@ -486,6 +505,7 @@ class Engine extends EventEmitter {
       workDir: String(p.workDir || '').trim(),
       skills: Array.isArray(p.skills) ? p.skills.map(String).slice(0, 40) : [],
       access: ACCESS_LEVELS.includes(p.access) ? p.access : 'chat',
+      approval: APPROVAL_LEVELS.includes(p.approval) ? p.approval : 'ask',
       builder: ids.includes(p.builder) ? p.builder : '',
       archived: false,
       created: Date.now(),
@@ -512,6 +532,10 @@ class Engine extends EventEmitter {
     if (Array.isArray(p.agents)) room.agents = p.agents.filter((a) => ids.includes(a));
     if (Array.isArray(p.skills)) room.skills = p.skills.map(String).slice(0, 40);
     if ('access' in p && ACCESS_LEVELS.includes(p.access)) room.access = p.access;
+    if ('approval' in p && APPROVAL_LEVELS.includes(p.approval)) {
+      if (p.approval !== room.approval) this.grants.delete(room.id);
+      room.approval = p.approval;
+    }
     if ('builder' in p) room.builder = ids.includes(p.builder) ? p.builder : '';
     if ('archived' in p) {
       const want = !!p.archived;
@@ -797,7 +821,12 @@ class Engine extends EventEmitter {
       queued[t.room] = queued[t.room] || {};
       queued[t.room][t.agent] = q.length;
     }
-    return { running, queued, usage: this._usageNow() };
+    const doing = {};
+    for (const [k, t] of this.doing) {
+      const [rid, aid] = k.split('|');
+      (doing[rid] = doing[rid] || {})[aid] = t;
+    }
+    return { running, queued, doing, pending: this.getPermissions().length, usage: this._usageNow() };
   }
 
   _emitStatus() {
@@ -946,7 +975,11 @@ class Engine extends EventEmitter {
       Object.keys(this.queues)
         .filter((k) => k.startsWith(prefix))
         .forEach((k) => delete this.queues[k]);
-      runs.forEach((e) => killTree(e.child));
+      this._denyRoomPermissions(rid, 'you stopped the room');
+      runs.forEach((e) => {
+        if (e.stop) e.stop();
+        killTree(e.child);
+      });
       const room = this._room(rid);
       if (had && !silent && room) this._note(room, 'I stopped this room. nothing else runs here until you send another message.');
     }
@@ -1206,8 +1239,159 @@ class Engine extends EventEmitter {
     return { level, args: args.slice(), unsupported: false };
   }
 
-  // over (optional): {prompt, cwd, timeoutMs}. Used for health tests, which run outside any room and with no build flags.
+  // Which agent runs get the permission-card treatment: the room's builder, at edit/run, if it has an interactive driver.
+  _interactiveFor(room, agentId) {
+    const agent = this.config.agents[agentId];
+    if (!room || !agent || !agent.driver) return null;
+    if (room.builder !== agentId || (room.access || 'chat') === 'chat') return null;
+    return { level: APPROVAL_LEVELS.includes(room.approval) ? room.approval : 'ask', access: room.access };
+  }
+
   async _exec(room, agentId, entry, over) {
+    const mode = over ? null : this._interactiveFor(room, agentId);
+    if (!mode) return this._execHeadless(room, agentId, entry, over);
+    const r = await this._execInteractive(room, agentId, entry, mode);
+    if (!r.fallback) return r;
+    if (process.env.HUDDLE_DEBUG) console.error('FALLBACK', JSON.stringify({ code: r.code, stderr: r.stderr, err: r.error && r.error.message }));
+    this._log(room, agentId, 'info', `couldn't use the interactive connection${r.error ? ' (' + r.error.message + ')' : ''}; ran the normal way instead`);
+    this._note(room, `${this.config.agents[agentId].label}'s interactive mode didn't start (usually an older version of the CLI), so I ran it the normal way. there are no permission cards this time, and your edit/run setting for it uses its normal flags.`, 'error');
+    return this._execHeadless(room, agentId, entry, over);
+  }
+
+  _spawnCli(agent, resolved, args, cwd) {
+    const shim = IS_WIN && /\.(cmd|bat)$/i.test(resolved);
+    if (shim) return spawn([resolved, ...args].map(winQuote).join(' '), [], { cwd, shell: true, windowsHide: true, env: process.env });
+    if (IS_WIN) return spawn(resolved, args, { cwd, windowsHide: true, env: process.env });
+    return spawn(resolved, args, { cwd, env: process.env, detached: true });
+  }
+
+  async _execInteractive(room, agentId, entry, mode) {
+    const agent = this.config.agents[agentId];
+    const S = this.config.settings;
+    const cwd = this.workDir(room.id);
+    const resolved = await resolveCommand(agent.command);
+    if (!resolved) return { error: Object.assign(new Error('not found'), { code: 'ENOENT' }), stdout: '', stderr: '' };
+    const prompt = this._buildPrompt(room, agentId);
+    this._log(room, agentId, 'info', `started (${mode.access === 'run' ? 'edit and run' : 'edit files'}, ${mode.level})`);
+    const key = this._key(room.id, agentId);
+    const r = await codexDriver.run({
+      spawn: (args) => {
+        const child = this._spawnCli(agent, resolved, args, cwd);
+        entry.child = child;
+        return child;
+      },
+      kill: killTree,
+      args: agent.driverArgs || ['app-server'],
+      cwd,
+      prompt,
+      level: mode.level,
+      timeoutMs: S.timeoutSec * 1000,
+      version: this.opts.appVersion || '',
+      entry,
+      activity: (t) => {
+        this.doing.set(key, t);
+        this._log(room, agentId, 'did', t);
+        this._emitStatus();
+      },
+      onWaiting: (w) => {
+        if (w) this.doing.set(key, 'waiting for your answer');
+        else this.doing.delete(key);
+        this._emitStatus();
+      },
+      ask: (info) => this._askPermission(room, agentId, mode, info),
+    });
+    this.doing.delete(key);
+    return r;
+  }
+
+  // A permission request from an agent. Resolves {decision:'allow'|'deny', forSession}.
+  _askPermission(room, agentId, mode, info) {
+    const agent = this.config.agents[agentId];
+    const kind = info.kind || 'other';
+    if (kind === 'command' && mode.access !== 'run') {
+      this._log(room, agentId, 'denied', `command blocked (room is edit-files only): ${info.detail}`);
+      return Promise.resolve({ decision: 'deny' });
+    }
+    if (mode.level === 'chat' && this.grants.has(room.id) && this.grants.get(room.id).has(kind)) {
+      this._log(room, agentId, 'allowed', `${info.title.replace('wants to ', '')}: ${info.detail} (allowed for this chat)`);
+      return Promise.resolve({ decision: 'allow', forSession: true });
+    }
+    return new Promise((resolve) => {
+      const id = 'p' + this.nextPermId++;
+      const perm = {
+        id,
+        room: room.id,
+        agent: agentId,
+        agentLabel: agent.label,
+        kind,
+        title: info.title,
+        detail: info.detail,
+        cwd: info.cwd || '',
+        reason: info.reason || '',
+        canRemember: mode.level === 'chat',
+        ts: Date.now(),
+        resolve,
+      };
+      this.perms.set(id, perm);
+      this._log(room, agentId, 'asked', `${info.title}: ${info.detail}`);
+      this.emit('permissions', this.getPermissions());
+      this._emitStatus();
+    });
+  }
+
+  getPermissions() {
+    return [...this.perms.values()].map(({ resolve, ...p }) => p);
+  }
+
+  // choice: 'once' | 'chat' | 'deny'
+  answerPermission(id, choice) {
+    const p = this.perms.get(id);
+    if (!p) return false;
+    this.perms.delete(id);
+    const room = this._room(p.room);
+    const allow = choice === 'once' || choice === 'chat';
+    if (choice === 'chat' && room) {
+      if (!this.grants.has(room.id)) this.grants.set(room.id, new Set());
+      this.grants.get(room.id).add(p.kind);
+    }
+    if (room) {
+      const what = `${p.title.replace('wants to ', '')}: ${p.detail}`;
+      this._log(room, p.agent, allow ? 'allowed' : 'denied', choice === 'chat' ? `${what} (and the rest of this kind, this chat)` : what);
+    }
+    p.resolve({ decision: allow ? 'allow' : 'deny', forSession: choice === 'chat' });
+    this.emit('permissions', this.getPermissions());
+    this._emitStatus();
+    return true;
+  }
+
+  _denyRoomPermissions(roomId, why) {
+    let any = false;
+    for (const [id, p] of [...this.perms]) {
+      if (p.room !== roomId) continue;
+      this.perms.delete(id);
+      any = true;
+      const room = this._room(roomId);
+      if (room) this._log(room, p.agent, 'denied', `${p.detail} (${why})`);
+      p.resolve({ decision: 'deny' });
+    }
+    if (any) this.emit('permissions', this.getPermissions());
+  }
+
+  _log(room, agentId, kind, text) {
+    if (!room) return;
+    const list = this.activity.get(room.id) || [];
+    list.push({ ts: Date.now(), agent: agentId, kind, text: String(text).slice(0, 600) });
+    if (list.length > ACTIVITY_MAX) list.splice(0, list.length - ACTIVITY_MAX);
+    this.activity.set(room.id, list);
+    this.emit('activity', { room: room.id });
+  }
+
+  getActivity(roomId) {
+    return (this.activity.get(roomId) || []).slice();
+  }
+
+  // over (optional): {prompt, cwd, timeoutMs}. Used for health tests, which run outside any room and with no build flags.
+  async _execHeadless(room, agentId, entry, over) {
     const agent = this.config.agents[agentId];
     const S = this.config.settings;
     const cwd = over && over.cwd ? over.cwd : this.workDir(room.id);

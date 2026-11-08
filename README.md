@@ -118,6 +118,21 @@ things to know before you turn it on:
 - the permission flags for each CLI are in **settings**, under each agent. I wrote them from the CLIs' docs and haven't tested them against every version, so try a throwaway repo first and check them against `--help` for your version. leave a level blank and that level won't work for that agent.
 - Grok's only build level is full auto-approve, so it's offered as "edit files and run commands" only. Codex runs in its own workspace sandbox, which usually can't reach the network, so it can edit and test but may not be able to push or install packages.
 
+## permission cards (agents that ask first)
+
+Headless runs can't stop and ask, so an agent that needs to run a command or change a file in a way its sandbox doesn't allow just fails or stalls. For **Codexa** (the first agent wired up) Huddle talks to `codex app-server` instead, so Codex can pause mid-task and a card pops up in the room: what it wants to do, why, and where. You answer **allow once**, **allow for this chat**, or **deny**, and it carries on with your answer. If you're in another window, you get a desktop notification.
+
+Pick how much you want to be asked in room settings → building → *when it needs permission*:
+
+- **ask me every time**: a card for every command or file change outside its sandbox.
+- **ask me, and let me allow things for this chat**: same cards, plus a button that remembers that kind of action until you close the app or change the setting.
+- **run automatically inside this folder**: no cards. Codex's own sandbox keeps it inside the room's folder (and usually off the network).
+- **run everything automatically**: no cards, no sandbox. It can touch anything on your computer and use the internet. Saving this setting asks you to confirm, and the room shows a loud banner while it's on.
+
+The **activity** button in a room shows an honest record of what agents did, what they asked for, and what you allowed or denied. It lives in memory, not on disk. In an *edit files* room, commands are refused automatically and that refusal is logged.
+
+If a CLI doesn't support the interactive connection (an older Codex, say), Huddle says so in the room and runs it the normal way. Claude and Grok still use their normal edit/run flags for now; their interactive drivers come next.
+
 ## tools panel (what each agent can actually do)
 
 The **tools** button in a room's header checks each CLI on your computer and shows what it found: whether it's installed, its version, the connectors (MCP servers) set up in that CLI with their real status, and whether that CLI's own skills folder has your shared skills. A dot on the button means something an agent needs isn't working.

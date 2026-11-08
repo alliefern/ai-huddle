@@ -71,6 +71,18 @@ function wireEngine() {
   engine.on('rooms', (r) => send('huddle:rooms', r));
   engine.on('skills', (s) => send('huddle:skills', s));
   engine.on('tools', (c) => send('huddle:tools', c));
+  engine.on('permissions', (list) => {
+    send('huddle:perms', list);
+    try {
+      const { Notification } = require('electron');
+      const w = win && !win.isDestroyed() ? win : null;
+      if (list.length && w && !w.isFocused() && Notification.isSupported()) {
+        const p = list[list.length - 1];
+        new Notification({ title: 'AI Huddle needs an answer', body: `${p.agentLabel} ${p.title}` }).show();
+      }
+    } catch (_) {}
+  });
+  engine.on('activity', (a) => send('huddle:activity', a));
   engine.on('cleared', (roomId) => send('huddle:cleared', roomId));
   engine.on('error-note', (t) => send('huddle:note', t));
 
@@ -89,6 +101,11 @@ function wireEngine() {
   ipcMain.handle('huddle:tools-get', () => engine.getCapabilities());
   ipcMain.handle('huddle:tools-refresh', (_e, id) => (id ? engine.probeAgent(str(id)).then(() => engine.getCapabilities()) : engine.probeAll()));
   ipcMain.handle('huddle:tools-test', (_e, id, kind) => engine.testAgent(str(id), str(kind)));
+
+  // permission cards and the activity log
+  ipcMain.handle('huddle:perms-get', () => engine.getPermissions());
+  ipcMain.handle('huddle:perms-answer', (_e, id, choice) => engine.answerPermission(str(id), ['once', 'chat', 'deny'].includes(choice) ? choice : 'deny'));
+  ipcMain.handle('huddle:activity-get', (_e, roomId) => engine.getActivity(str(roomId)));
 
   // shared memory
   ipcMain.handle('huddle:memory-get', () => ({ text: engine.getMemory(), max: MEMORY_MAX_CHARS }));
