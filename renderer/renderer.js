@@ -1637,10 +1637,13 @@
           const base = {
             ask: 'a card pops up before every command or file change and nothing happens until you answer.',
             chat: "same cards, plus an \"allow for this chat\" button. it remembers that kind of action until you close the app or change this setting.",
-            folder: "it works inside this room's folder without asking. its own sandbox stops it from touching anything outside, and usually from using the network.",
+            folder:
+              who === 'codex'
+                ? "it works inside this room's folder without asking. its own sandbox stops it from touching anything outside, and usually from using the network."
+                : "file edits go through without asking. Claude and Grok can't be sandboxed, so commands and web use still ask first.",
             auto: 'WARNING: no questions and no sandbox. it can read, change or delete anything on your computer, install software and use the internet. only use this on a machine and folder you can afford to lose.',
           }[v];
-          apprWarn.textContent = (live ? '' : 'this only works for agents with a live connection (Codexa for now). the others use their normal edit/run flags above. ') + base;
+          apprWarn.textContent = (live ? '' : 'this agent has no live connection, so it uses its normal edit/run flags above instead. ') + base;
           apprWarn.classList.toggle('danger-text', v === 'auto');
         };
         refs.approval.addEventListener('change', refreshAppr);

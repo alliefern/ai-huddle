@@ -11,6 +11,7 @@ class RpcPeer {
     this.pending = new Map();
     this.buf = '';
     this.closed = false;
+    this.v2 = !!handlers.jsonrpc2;
     child.stdout.setEncoding('utf8');
     child.stdout.on('data', (d) => this._data(d));
     child.stdin.on('error', () => {});
@@ -62,7 +63,7 @@ class RpcPeer {
   _send(obj) {
     if (this.closed) return false;
     try {
-      this.child.stdin.write(JSON.stringify(obj) + '\n');
+      this.child.stdin.write(JSON.stringify(this.v2 ? Object.assign({ jsonrpc: '2.0' }, obj) : obj) + '\n');
       return true;
     } catch (_) {
       return false;
