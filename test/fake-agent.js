@@ -39,6 +39,13 @@ let prompt;
 if (src && src !== '-') prompt = fs.existsSync(src) && fs.statSync(src).isFile() ? fs.readFileSync(src, 'utf8') : src;
 else prompt = fs.readFileSync(0, 'utf8');
 
+// FAKE_ARGLOG: record the flags this run got, and whether the prompt told it this run is chat only
+if (process.env.FAKE_ARGLOG) {
+  try {
+    fs.appendFileSync(process.env.FAKE_ARGLOG, JSON.stringify({ id, argv, chatOnly: /can't change files or run commands/.test(prompt) }) + '\n');
+  } catch (_) {}
+}
+
 // health-test prompts from the app (no conversation block): FAKE_WEB=no|blank|odd changes the web answer
 if (/Reply with exactly: HUDDLE-OK/.test(prompt)) return console.log(process.env.FAKE_HELLO === 'odd' ? 'sure thing!' : 'HUDDLE-OK');
 if (/open https:\/\/example\.com/.test(prompt)) {

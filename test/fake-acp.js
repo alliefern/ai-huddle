@@ -1,5 +1,6 @@
 'use strict';
-// A stand-in for `grok agent stdio` (Agent Client Protocol). FAKE_ACP: cmd (default) | edit | quiet | dead
+// A stand-in for `grok agent stdio` (Agent Client Protocol). FAKE_ACP: cmd (default) | edit (in its folder) |
+// edit-outside (/etc) | quiet | dead
 const fs = require('fs');
 const mode = process.env.FAKE_ACP || 'cmd';
 if (mode === 'dead') {
@@ -20,10 +21,10 @@ const options = [
 async function prompt(id, sid) {
   send({ method: 'session/update', params: { sessionId: sid, update: { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'hmm' } } } });
   const got = [];
-  const todo = mode === 'quiet' ? [] : mode === 'edit' ? ['edit'] : ['cmd'];
+  const todo = mode === 'quiet' ? [] : mode === 'edit' || mode === 'edit-outside' ? ['edit'] : ['cmd'];
   for (const t of todo) {
     const toolCall = t === 'edit'
-      ? { toolCallId: 'tc2', title: 'Edit logo.svg', kind: 'edit', locations: [{ path: '/work/logo.svg' }] }
+      ? { toolCallId: 'tc2', title: 'Edit logo.svg', kind: 'edit', locations: [{ path: mode === 'edit-outside' ? '/etc/logo.svg' : require('path').join(process.cwd(), 'logo.svg') }] }
       : { toolCallId: 'tc1', title: 'Run npm install sharp', kind: 'execute', rawInput: { command: 'npm install sharp' } };
     send({ method: 'session/update', params: { sessionId: sid, update: Object.assign({ sessionUpdate: 'tool_call', status: 'pending' }, toolCall) } });
     const r = await ask('session/request_permission', { sessionId: sid, toolCall, options });
@@ -44,7 +45,7 @@ process.stdin.on('data', (d) => {
     if (!line.trim()) continue;
     const m = JSON.parse(line);
     if (m.method) log({ method: m.method, params: m.params, v2: m.jsonrpc === '2.0' });
-    if (m.method === 'initialize') send({ id: m.id, result: { protocolVersion: 1, authMethods: [{ id: 'xai.api_key' }, { id: 'cached_token' }], agentCapabilities: {} } });
+    if (m.method === 'initialize') send({ id: m.id, result: { protocolVersion: 1, authMethods: process.env.FAKE_ACP_NOCACHE ? [{ id: 'xai.api_key' }] : [{ id: 'xai.api_key' }, { id: 'cached_token' }], agentCapabilities: {} } });
     else if (m.method === 'authenticate') send({ id: m.id, result: {} });
     else if (m.method === 'session/new') send({ id: m.id, result: { sessionId: 's1' } });
     else if (m.method === 'session/prompt') prompt(m.id, m.params.sessionId);

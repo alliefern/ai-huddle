@@ -1,11 +1,14 @@
 'use strict';
 // A stand-in for `claude -p` with a PreToolUse HTTP hook. FAKE_TOOLS="Bash:npm test,Write:/a.txt,Read:/b" lists what it tries.
+// A path starting with ./ is made absolute inside the folder it runs in (the room's folder), like Claude does.
+// FAKE_RAW=1 posts a body with no tool_name, to check that unreadable requests are refused.
 const fs = require('fs');
 const http = require('http');
 const argv = process.argv.slice(2);
 const val = (f) => { const i = argv.indexOf(f); return i >= 0 ? argv[i + 1] : null; };
 const mode = val('--permission-mode') || 'none';
 const settingsFile = val('--settings');
+const disallowed = val('--disallowedTools') || 'none';
 fs.readFileSync(0, 'utf8'); // the prompt
 const post = (url, body) => new Promise((resolve) => {
   const u = new URL(url);
@@ -30,11 +33,12 @@ const post = (url, body) => new Promise((resolve) => {
     const name = t.slice(0, at);
     const arg = t.slice(at + 1);
     if (!matcher || !matcher.test(name)) { out.push(`${name}=pass`); continue; }
-    const input = name === 'Bash' ? { command: arg } : name.startsWith('Web') ? { url: arg } : { file_path: arg };
-    const r = await post(url, { hook_event_name: 'PreToolUse', tool_name: name, tool_input: input });
+    const file = arg.startsWith('./') ? require('path').resolve(arg) : arg;
+    const input = name === 'Bash' ? { command: arg } : name.startsWith('Web') ? { url: arg } : name.startsWith('mcp__') ? {} : { file_path: file };
+    const r = await post(url, process.env.FAKE_RAW ? { hook_event_name: 'PreToolUse' } : { hook_event_name: 'PreToolUse', tool_name: name, tool_input: input });
     let d = 'none';
     try { d = JSON.parse(r.body).hookSpecificOutput.permissionDecision; } catch (_) {}
     out.push(`${name}=${d}`);
   }
-  console.log(`claude mode=${mode} hook=${hasHook ? 'yes' : 'no'} ${out.join(' ')}`);
+  console.log(`claude mode=${mode} hook=${hasHook ? 'yes' : 'no'} disallowed=${disallowed} ${out.join(' ')}`);
 })();

@@ -516,9 +516,16 @@
   const APPROVAL_TEXT = {
     ask: { short: 'asks before each action', long: 'ask me every time' },
     chat: { short: 'asks once per kind of action', long: 'ask me, and let me allow things for this chat' },
-    folder: { short: 'runs freely in this folder', long: 'run automatically inside this folder' },
+    folder: { short: 'no questions inside this folder', long: 'run automatically inside this folder' },
     auto: { short: 'runs everything automatically', long: 'run everything automatically (no questions, no folder limit)' },
   };
+  // The header's short version, said the way it actually works for this builder. Only Codex has a sandbox, and only
+  // in an edit-and-run room does Huddle hand the "folder" decision to it.
+  function approvalShort(level, who, access) {
+    if (level === 'folder') return who === 'codex' && access === 'run' ? "works freely inside this folder (Codex's own sandbox)" : 'file edits inside this folder without asking; everything else asks';
+    if (level === 'auto' && access !== 'run') return 'edits any file without asking; commands are still refused';
+    return (APPROVAL_TEXT[level] || APPROVAL_TEXT.ask).short;
+  }
 
   function renderPerms() {
     const dock = $('#perm-dock');
@@ -544,7 +551,7 @@
         pre.textContent = p.detail;
         card.append(pre);
       }
-      const meta = [p.reason && `why: ${p.reason}`, p.cwd && `in: ${p.cwd}`].filter(Boolean).join('  ·  ');
+      const meta = [p.outside && "outside this room's folder", p.reason && `why: ${p.reason}`, p.cwd && `in: ${p.cwd}`].filter(Boolean).join('  ·  ');
       if (meta) {
         const m = document.createElement('p');
         m.className = 'perm-meta';
@@ -565,7 +572,10 @@
         return b;
       };
       row.append(btn('allow once', 'primary', 'once'));
-      if (p.canRemember) row.append(btn('allow for this chat', '', 'chat', 'allows this kind of action until you close the app or change the level'));
+      if (p.canRemember)
+        row.append(
+          btn('allow for this chat', '', 'chat', "allows this kind of action (file changes: only inside this room's folder) until you close the app or change the room's level, builder, access or folder")
+        );
       row.append(btn('deny', 'danger', 'deny'));
       card.append(row);
       dock.append(card);
@@ -591,17 +601,18 @@
     if (bt) {
       bt.hidden = !(bAgent && r.access && r.access !== 'chat');
       if (!bt.hidden) {
-        const lvl = APPROVAL_TEXT[r.approval || 'ask'];
         const live = !!(bAgent && bAgent.driver);
         const auto = live && r.approval === 'auto';
         bt.textContent =
           `${bAgent.label} is building here (${r.access === 'run' ? 'edits files + runs commands' : 'edits files'}` +
-          (live ? `; ${lvl.short}` : '') +
+          (live ? `; ${approvalShort(r.approval || 'ask', r.builder, r.access)}` : '') +
           ')' +
           (auto ? ' · NO QUESTIONS ASKED' : '');
         bt.classList.toggle('danger', auto);
         bt.title = auto
-          ? 'this agent can do anything on your computer without asking. change it in room settings.'
+          ? r.access === 'run'
+            ? 'this agent can do anything on your computer without asking. change it in room settings.'
+            : 'this agent can change any file on your computer without asking (commands are still refused). change it in room settings.'
           : 'only this agent can change files in this room. change it in room settings.';
       }
     }
@@ -1596,8 +1607,12 @@
         refs.builder.value = editing && room.builder ? room.builder : '';
         const buildWarn = document.createElement('p');
         buildWarn.className = 'hint build-warn';
+        // An agent with a live connection can build at either level (its permission cards do the gating). One without
+        // needs flags for that level in settings.
         const supports = (id, lvl) => {
-          const aa = (state.config.agents[id] || {}).accessArgs || {};
+          const a = state.config.agents[id] || {};
+          if (a.driver) return true;
+          const aa = a.accessArgs || {};
           return Array.isArray(aa[lvl]) && aa[lvl].length > 0;
         };
         const refreshBuildWarn = () => {
@@ -1611,7 +1626,7 @@
           } else {
             msg =
               (lvl === 'run'
-                ? `${state.config.agents[who].label} can edit files and run commands (git, builds, tests) on your computer, inside the folder above. `
+                ? `${state.config.agents[who].label} can edit files and run commands (git, builds, tests) on your computer, starting in the folder above. `
                 : `${state.config.agents[who].label} can edit files inside the folder above, but not run commands. `) +
               "it's told to work on a git branch, not main, and not to push unless you ask. only use this on a repo you can roll back, and keep an eye on what it does.";
           }
@@ -1634,20 +1649,37 @@
           const who = refs.builder.value;
           const live = who && (state.config.agents[who] || {}).driver;
           const v = refs.approval.value;
+          const access = refs.access.value;
+          const reads =
+            who === 'codex'
+              ? 'reading and searching don\'t ask, and neither do a few commands Codex itself counts as read-only (like listing or showing files).'
+              : "reading and searching don't ask.";
+          const acts = ['changes a file', access === 'run' && 'runs a command', who !== 'codex' && 'uses the web', who === 'claude' && 'uses a connector'].filter(Boolean);
+          const gated = (acts.length > 1 ? acts.slice(0, -1).join(', ') + ' or ' + acts[acts.length - 1] : acts[0]) + ',';
           const base = {
-            ask: 'a card pops up before every command or file change and nothing happens until you answer.',
-            chat: "same cards, plus an \"allow for this chat\" button. it remembers that kind of action until you close the app or change this setting.",
+            ask:
+              `a card pops up before it ${gated} and nothing happens until you answer. ${reads}` +
+              (who === 'codex' ? " Codex's own web search, if you've turned it on in Codex, isn't something it asks about." : '') +
+              (access === 'run' ? '' : ' commands are refused, because this room is edit files only.'),
+            chat: "same cards, plus an \"allow for this chat\" button. it remembers that kind of action until you close the app or change this room's level, builder, access or folder. for file changes it only ever covers files inside this room's folder.",
             folder:
-              who === 'codex'
-                ? "it works inside this room's folder without asking. its own sandbox stops it from touching anything outside, and usually from using the network."
-                : "file edits go through without asking. Claude and Grok can't be sandboxed, so commands and web use still ask first.",
-            auto: 'WARNING: no questions and no sandbox. it can read, change or delete anything on your computer, install software and use the internet. only use this on a machine and folder you can afford to lose.',
+              who === 'codex' && access === 'run'
+                ? "it works inside this room's folder without asking. that's Codex's own sandbox stopping it from writing anywhere else (and usually from using the network), not AI Huddle."
+                : "file changes AI Huddle can see are inside this room's folder go through without asking. a change anywhere else, " +
+                  (access === 'run' ? 'any command, ' : '') +
+                  'web use and connectors still ask. this is AI Huddle checking the path, not a sandbox.' +
+                  (access === 'run' ? '' : ' commands are refused, because this room is edit files only.'),
+            auto:
+              access === 'run'
+                ? 'WARNING: no questions and no sandbox. it can read, change or delete anything on your computer, install software and use the internet. only use this on a machine and folder you can afford to lose.'
+                : 'WARNING: no questions and no folder limit. it can change or delete any file on your computer and use the internet. commands are still refused, because this room is edit files only.',
           }[v];
           apprWarn.textContent = (live ? '' : 'this agent has no live connection, so it uses its normal edit/run flags above instead. ') + base;
           apprWarn.classList.toggle('danger-text', v === 'auto');
         };
         refs.approval.addEventListener('change', refreshAppr);
         refs.builder.addEventListener('change', refreshAppr);
+        refs.access.addEventListener('change', refreshAppr);
         refreshAppr();
         bgrid.append(...field('access level', refs.access), ...field('who builds', refs.builder), ...field('when it needs permission', refs.approval));
         bg.append(bgrid, buildWarn, apprWarn);
@@ -1743,8 +1775,11 @@
             };
             const live = payload.builder && (state.config.agents[payload.builder] || {}).driver;
             if (live && payload.access !== 'chat' && payload.approval === 'auto' && !(editing && room.approval === 'auto' && room.builder === payload.builder)) {
+              const who = state.config.agents[payload.builder].label;
               const ok = confirm(
-                `run everything automatically?\n\n${state.config.agents[payload.builder].label} will be able to change or delete anything on this computer, run any command, install software and use the internet, and it will never ask you first.\n\nonly say yes if you trust the task and can undo it.`
+                payload.access === 'run'
+                  ? `run everything automatically?\n\n${who} will be able to change or delete anything on this computer, run any command, install software and use the internet, and it will never ask you first.\n\nonly say yes if you trust the task and can undo it.`
+                  : `run everything automatically?\n\n${who} will be able to change or delete any file on this computer and use the internet, and it will never ask you first. commands stay refused, because this room is edit files only.\n\nonly say yes if you trust the task and can undo it.`
               );
               if (!ok) return;
             }

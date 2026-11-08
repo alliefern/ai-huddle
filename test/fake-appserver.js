@@ -4,6 +4,8 @@
 //   file: asks to change a file      legacy: asks with the old-style method names
 //   two: asks for a command twice    quiet: asks nothing      dead: exits right away (no app-server in this version)
 //   hang: never finishes             midcrash: dies after starting the turn with no answer
+//   file-item: announces a file change in its folder (item/started), then asks about it by item id only
+//   askexit: asks to run a command, then quits without waiting for the answer
 const fs = require('fs');
 const mode = process.env.FAKE_APP || 'cmd';
 if (mode === 'dead') {
@@ -27,12 +29,20 @@ async function turn(threadId, text) {
   send({ method: 'turn/started', params: { threadId, turn: { id: 't1' } } });
   if (mode === 'hang') return;
   if (mode === 'midcrash') process.exit(3);
+  if (mode === 'askexit') {
+    ask('item/commandExecution/requestApproval', { threadId, itemId: 'i1', command: 'npm install sharp', cwd: '/work' });
+    setTimeout(() => process.exit(0), 300);
+    return;
+  }
   const decisions = [];
-  const todo = mode === 'quiet' ? [] : mode === 'two' ? ['cmd', 'cmd'] : [mode === 'file' || mode === 'legacy-file' ? 'file' : 'cmd'];
+  const todo = mode === 'quiet' ? [] : mode === 'two' ? ['cmd', 'cmd'] : mode === 'file-item' ? ['file-item'] : [mode === 'file' || mode === 'legacy-file' ? 'file' : 'cmd'];
   for (const t of todo) {
     let r;
     if (mode === 'legacy') r = await ask('execCommandApproval', { conversationId: threadId, command: ['npm', 'install', 'sharp'], cwd: '/work' });
-    else if (t === 'file') r = await ask('item/fileChange/requestApproval', { threadId, itemId: 'i2', reason: 'needs to write outside the folder', grantRoot: '/etc' });
+    else if (t === 'file-item') {
+      send({ method: 'item/started', params: { threadId, item: { id: 'i3', type: 'fileChange', changes: [{ path: require('path').join(process.cwd(), 'notes.md'), kind: 'add' }] } } });
+      r = await ask('item/fileChange/requestApproval', { threadId, itemId: 'i3', reason: 'write notes' });
+    } else if (t === 'file') r = await ask('item/fileChange/requestApproval', { threadId, itemId: 'i2', reason: 'needs to write outside the folder', grantRoot: '/etc' });
     else r = await ask('item/commandExecution/requestApproval', { threadId, itemId: 'i1', command: 'npm install sharp', cwd: '/work', reason: 'install a dependency' });
     decisions.push(r.decision);
     send({ method: 'item/started', params: { threadId, item: { type: 'commandExecution', command: 'npm install sharp' } } });
