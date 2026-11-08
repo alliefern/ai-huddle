@@ -23,7 +23,7 @@ function check(name, cond, extra) {
 function fakeConfig(extra = {}) {
   const agents = {};
   for (const id of ['claude', 'codex', 'grok']) {
-    agents[id] = { command: process.execPath, args: [FAKE, id], input: 'stdin', enabled: true };
+    agents[id] = { command: process.execPath, args: [FAKE, id], input: 'stdin', enabled: true, probe: { version: [FAKE, id, '--version'], mcp: [FAKE, id, 'mcp', 'list'] } };
   }
   return { agents, settings: { timeoutSec: 20, maxAutoRuns: 6, autoHandoff: true, ...extra } };
 }
@@ -338,6 +338,71 @@ const alive = (pid) => {
     check('clone works and points the room at it', r.ok && fs.existsSync(path.join(r.path, 'a.txt')) && e.rooms[0].workDir === r.path, r);
     const bad = await new Engine(fs.mkdtempSync(path.join(os.tmpdir(), 'huddle-clone-')), { config: fakeConfig() }).cloneRepo('r1', '--evil');
     check('a bad link is refused with a plain message', !!bad.error && /https link/.test(bad.error));
+  }
+
+  console.log('capability checks');
+  {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'huddle-home-'));
+    fs.mkdirSync(path.join(home, '.claude', 'skills', 'carousel'), { recursive: true });
+    fs.writeFileSync(path.join(home, '.claude', 'skills', 'carousel', 'SKILL.md'), '---\nname: carousel\n---\nhi');
+    const e = new Engine(fs.mkdtempSync(path.join(os.tmpdir(), 'huddle-cap-')), { config: fakeConfig(), homeDir: home });
+    const src = fs.mkdtempSync(path.join(os.tmpdir(), 'huddle-sk-'));
+    fs.mkdirSync(path.join(src, 'carousel'));
+    fs.writeFileSync(path.join(src, 'carousel', 'SKILL.md'), '---\nname: carousel\ndescription: x\n---\nbody');
+    fs.mkdirSync(path.join(src, 'poster'));
+    fs.writeFileSync(path.join(src, 'poster', 'SKILL.md'), '---\nname: poster\ndescription: y\n---\nbody');
+    e.importSkills([src]);
+
+    const all = await e.probeAll();
+    const c = all.agents.claude;
+    check('finds the CLI and its version', c.installed && c.version === 'fake-claude 1.2.3', c);
+    check('reads connectors and their real status', c.mcp.state === 'ok' && c.mcp.servers.find((s) => s.name === 'pixelStudio').status === 'failed' && c.mcp.servers.find((s) => s.name === 'notes').status === 'connected' && c.mcp.servers.find((s) => s.name === 'drive').status === 'needs-auth', c.mcp);
+    check('keeps the raw text so the app can show it', /Checking MCP/.test(c.mcp.raw));
+    check("looks in the CLI's own skills folder under the user's home", c.skills.dir === path.join(home, '.claude', 'skills') && c.skills.exists && c.skills.count === 1, c.skills);
+    check('counts how many shared skills that CLI has', c.skills.sharedTotal === 2 && c.skills.sharedHere === 1, c.skills);
+    check('a CLI with no skills folder says so', all.agents.codex.skills.exists === false && all.agents.codex.skills.count === 0);
+    check('cached results come back without re-running', e.getCapabilities().agents.grok.installed === true);
+
+    process.env.FAKE_MCP = 'none';
+    check('no connectors is reported as none', (await e.probeAgent('claude')).mcp.state === 'none');
+    process.env.FAKE_MCP = 'fail';
+    const f = (await e.probeAgent('claude')).mcp;
+    check("a CLI that doesn't know the command is 'unknown' with the reason", f.state === 'unknown' && /didn't understand/.test(f.note) && /unknown command/.test(f.raw), f);
+    process.env.FAKE_MCP = 'bad';
+    check('unreadable output is unknown, raw kept', (await e.probeAgent('claude')).mcp.state === 'unknown');
+    delete process.env.FAKE_MCP;
+
+    e.updateConfig({ agents: { claude: { command: 'definitely-not-installed-xyz' } } });
+    const nf = await e.probeAgent('claude');
+    check('a missing CLI is reported as not installed', nf.installed === false && nf.mcp === null);
+    e.updateConfig({ agents: { claude: { command: process.execPath, enabled: false } } });
+    const off = await e.probeAgent('claude');
+    check('a switched-off agent is not run', off.enabled === false && off.installed === false);
+    e.updateConfig({ agents: { claude: { enabled: true } } });
+
+    const hello = await e.testAgent('codex', 'hello');
+    check('hello test passes when the agent answers', hello.ok && /logged in/.test(hello.summary), hello);
+    process.env.FAKE_HELLO = 'odd';
+    check("hello test fails honestly when the answer is off", (await e.testAgent('codex', 'hello')).ok === false);
+    delete process.env.FAKE_HELLO;
+    const web = await e.testAgent('grok', 'web');
+    check('web test passes when the page was read', web.ok && /live web page/.test(web.summary), web);
+    process.env.FAKE_WEB = 'no';
+    const noweb = await e.testAgent('grok', 'web');
+    check("web test reports the agent's own reason", !noweb.ok && /turned off/.test(noweb.detail) && /can't browse/.test(noweb.summary), noweb);
+    process.env.FAKE_WEB = 'odd';
+    check("web test doesn't pretend when it can't tell", (await e.testAgent('grok', 'web')).ok === false);
+    delete process.env.FAKE_WEB;
+    check('test results are kept per agent', e.getCapabilities().tests.grok.web && e.getCapabilities().tests.codex.hello);
+    check('tests count as runs on the usage bar', e.usage && JSON.stringify(e.usage).length > 2);
+    check('bad test names are refused', (await e.testAgent('grok', 'rm -rf')).ok === false);
+
+    const slow = new Engine(fs.mkdtempSync(path.join(os.tmpdir(), 'huddle-cap-')), { config: fakeConfig(), homeDir: home, probeTimeoutMs: 600 });
+    process.env.FAKE_MCP = 'hang';
+    const t0 = Date.now();
+    const s = await slow.probeAgent('claude');
+    delete process.env.FAKE_MCP;
+    check('a stuck connector is reported as stalled, not hung', s.mcp.state === 'stalled' && Date.now() - t0 < 5000, s.mcp);
   }
 
   console.log('export');

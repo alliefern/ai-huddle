@@ -8,6 +8,27 @@ const id = argv.find((a) => ['claude', 'codex', 'grok'].includes(a)) || 'claude'
 const rest = argv.filter((a) => a !== id && !a.startsWith('--'));
 const src = rest[rest.length - 1];
 
+// health-check subcommands: --version and "mcp list" (FAKE_MCP=hang|none|fail|bad to change what it says)
+if (argv.includes('--version')) {
+  console.log(`fake-${id} 1.2.3`);
+  process.exit(0);
+}
+if (argv.includes('mcp') && argv.includes('list')) {
+  const mode = process.env.FAKE_MCP || 'some';
+  if (mode === 'hang') setInterval(() => {}, 1000);
+  else if (mode === 'none') (console.log('No MCP servers configured.'), process.exit(0));
+  else if (mode === 'fail') (console.error('error: unknown command mcp'), process.exit(2));
+  else if (mode === 'bad') (console.log('???'), process.exit(0));
+  else {
+    console.log('Checking MCP server health...');
+    console.log('pixelStudio: npx pixel-studio-mcp - \u2717 Failed to connect');
+    console.log('notes: node notes.js - \u2713 Connected');
+    console.log('drive: https://x.example/mcp - \u26a0 Needs authentication');
+    process.exit(0);
+  }
+  return;
+}
+
 if (process.env.FAKE_PIDFILE) {
   try {
     fs.writeFileSync(process.env.FAKE_PIDFILE + '.' + id, String(process.pid));
@@ -17,6 +38,15 @@ if (process.env.FAKE_PIDFILE) {
 let prompt;
 if (src && src !== '-') prompt = fs.existsSync(src) && fs.statSync(src).isFile() ? fs.readFileSync(src, 'utf8') : src;
 else prompt = fs.readFileSync(0, 'utf8');
+
+// health-test prompts from the app (no conversation block): FAKE_WEB=no|blank|odd changes the web answer
+if (/Reply with exactly: HUDDLE-OK/.test(prompt)) return console.log(process.env.FAKE_HELLO === 'odd' ? 'sure thing!' : 'HUDDLE-OK');
+if (/open https:\/\/example\.com/.test(prompt)) {
+  const w = process.env.FAKE_WEB || 'yes';
+  if (w === 'no') return console.log('NO-WEB: this mode has web tools turned off.');
+  if (w === 'odd') return console.log('I think it says hello.');
+  return console.log('TITLE: Example Domain');
+}
 
 const startI = prompt.lastIndexOf('--- Conversation so far ---');
 const afterStart = startI < 0 ? '' : prompt.slice(startI + '--- Conversation so far ---'.length);

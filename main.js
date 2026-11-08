@@ -70,6 +70,7 @@ function wireEngine() {
   engine.on('config', (c) => send('huddle:config', c));
   engine.on('rooms', (r) => send('huddle:rooms', r));
   engine.on('skills', (s) => send('huddle:skills', s));
+  engine.on('tools', (c) => send('huddle:tools', c));
   engine.on('cleared', (roomId) => send('huddle:cleared', roomId));
   engine.on('error-note', (t) => send('huddle:note', t));
 
@@ -83,6 +84,11 @@ function wireEngine() {
       .map((f) => ({ name: str(f.name), mime: str(f.mime), data: Buffer.from(f.data) }));
     engine.send(str(roomId), str(text), clean);
   });
+
+  // what each agent can actually do (checked, never assumed)
+  ipcMain.handle('huddle:tools-get', () => engine.getCapabilities());
+  ipcMain.handle('huddle:tools-refresh', (_e, id) => (id ? engine.probeAgent(str(id)).then(() => engine.getCapabilities()) : engine.probeAll()));
+  ipcMain.handle('huddle:tools-test', (_e, id, kind) => engine.testAgent(str(id), str(kind)));
 
   // shared memory
   ipcMain.handle('huddle:memory-get', () => ({ text: engine.getMemory(), max: MEMORY_MAX_CHARS }));
@@ -167,6 +173,8 @@ app.whenReady().then(() => {
   wireEngine();
   wireUpdater();
   createWindow();
+  // quiet health check a few seconds after launch, so the tools panel already has answers when you open it
+  setTimeout(() => engine && engine.probeAll().catch(() => {}), 4000).unref();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
